@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3 (pre-release)
+
+- The Neovim plugin reports its version with every payload; the extension warns once when the plugin is outdated or the two halves speak different protocol versions.
+- `Neovim Marks: Show status` prints both versions, mark counts and the active settings to the output channel.
+
 ## 0.1.2 (pre-release)
 
 - Fix: lowercase (buffer-local) marks were not shown under vscode-neovim, whose document buffers use `buftype=acwrite`.

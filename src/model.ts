@@ -23,7 +23,10 @@ export interface WireGlobalMark extends WireMark {
 
 /** Payload pushed by lua/nvim-marks/init.lua via `vscode.action("nvimMarks.update", { args = { payload } })`. */
 export interface WirePayload {
+  /** Wire protocol version, see `PROTOCOL_VERSION`. */
   version: number;
+  /** Release of the Neovim plugin; absent before 0.1.3. */
+  plugin_version?: string;
   locals: WireLocalEntry[];
   globals: WireGlobalMark[];
 }
@@ -69,6 +72,80 @@ function isObject(x: unknown): x is Record<string, unknown> {
 
 function num(x: unknown): number | undefined {
   return typeof x === "number" && Number.isFinite(x) ? x : undefined;
+}
+
+/** Wire protocol version this extension understands (`version` in the payload). */
+export const PROTOCOL_VERSION = 1;
+
+/**
+ * Oldest Neovim plugin release that needs no update. 0.1.3 is the first one
+ * that reports `plugin_version`, so a plugin silent about its version is older.
+ */
+export const MIN_PLUGIN_VERSION = "0.1.3";
+
+/** What a payload says about the Neovim half. */
+export interface PayloadInfo {
+  protocol?: number;
+  pluginVersion?: string;
+}
+
+export interface CompatIssue {
+  /** Which half has to be updated. */
+  outdated: "extension" | "plugin";
+  message: string;
+}
+
+const VERSION_RE = /^(\d+)\.(\d+)\.(\d+)/;
+
+/**
+ * Compare the numeric major.minor.patch of two versions; a suffix such as
+ * "-alpha.1" is ignored. Undefined if either one does not parse.
+ */
+export function compareVersions(a: string, b: string): number | undefined {
+  const pa = VERSION_RE.exec(a);
+  const pb = VERSION_RE.exec(b);
+  if (!pa || !pb) return undefined;
+  for (let i = 1; i <= 3; i++) {
+    const d = Number(pa[i]) - Number(pb[i]);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** Version fields of a wire payload, or undefined if it is not a payload at all. */
+export function payloadInfo(raw: unknown): PayloadInfo | undefined {
+  if (!isObject(raw)) return undefined;
+  const info: PayloadInfo = {};
+  const protocol = num(raw.version);
+  if (protocol !== undefined) info.protocol = protocol;
+  if (typeof raw.plugin_version === "string" && raw.plugin_version !== "") info.pluginVersion = raw.plugin_version;
+  return info;
+}
+
+/** Decide whether the two halves fit together; undefined means they do. */
+export function checkCompat(info: PayloadInfo): CompatIssue | undefined {
+  const { protocol, pluginVersion } = info;
+  const updatePlugin = "Update it in Neovim (e.g. `:Lazy update vscode-nvim-marks`) and reload the window.";
+  if (protocol !== undefined && protocol > PROTOCOL_VERSION) {
+    return {
+      outdated: "extension",
+      message: `the Neovim plugin sends protocol ${protocol}, this extension understands ${PROTOCOL_VERSION}. Update the Neovim Marks extension in VS Code.`,
+    };
+  }
+  if (protocol !== undefined && protocol < PROTOCOL_VERSION) {
+    return {
+      outdated: "plugin",
+      message: `the Neovim plugin sends protocol ${protocol}, this extension needs ${PROTOCOL_VERSION}. ${updatePlugin}`,
+    };
+  }
+  const cmp = pluginVersion === undefined ? undefined : compareVersions(pluginVersion, MIN_PLUGIN_VERSION);
+  if (cmp === undefined || cmp < 0) {
+    return {
+      outdated: "plugin",
+      message: `the nvim-marks Neovim plugin is ${pluginVersion ?? `older than ${MIN_PLUGIN_VERSION}`}, ${MIN_PLUGIN_VERSION} or newer is recommended. ${updatePlugin}`,
+    };
+  }
+  return undefined;
 }
 
 /**

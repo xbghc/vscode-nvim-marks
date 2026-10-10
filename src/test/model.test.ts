@@ -1,6 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildStore, decorationKey, groupByLine, makeNormalizer } from "../model";
+import {
+  buildStore,
+  checkCompat,
+  compareVersions,
+  decorationKey,
+  groupByLine,
+  makeNormalizer,
+  MIN_PLUGIN_VERSION,
+  payloadInfo,
+  PROTOCOL_VERSION,
+} from "../model";
 import { markIconSvg, markIconUri } from "../icons";
 
 const norm = makeNormalizer("linux");
@@ -104,4 +114,29 @@ test("icon svg escapes text, frames globals, and encodes as data uri", () => {
   assert.match(uri, /^data:image\/svg\+xml;base64,/);
   const decoded = Buffer.from(uri.split(",")[1], "base64").toString("utf8");
   assert.equal(decoded, markIconSvg("ab", "local", "#000"));
+});
+
+test("compareVersions orders major.minor.patch numerically and ignores suffixes", () => {
+  assert.equal(compareVersions("0.1.3", "0.1.3"), 0);
+  assert.ok(compareVersions("0.1.10", "0.1.9")! > 0);
+  assert.ok(compareVersions("0.2.0", "1.0.0")! < 0);
+  assert.equal(compareVersions("0.1.3-alpha.1", "0.1.3"), 0);
+  assert.equal(compareVersions("dev", "0.1.3"), undefined);
+});
+
+test("payloadInfo reads protocol and plugin version, tolerating junk", () => {
+  assert.deepEqual(payloadInfo({ version: 1, plugin_version: "0.1.3", locals: [], globals: [] }), { protocol: 1, pluginVersion: "0.1.3" });
+  assert.deepEqual(payloadInfo({ version: "1", plugin_version: 3 }), {});
+  assert.equal(payloadInfo("garbage"), undefined);
+  assert.equal(payloadInfo(undefined), undefined);
+});
+
+test("checkCompat names the half that has to be updated", () => {
+  assert.equal(checkCompat({ protocol: PROTOCOL_VERSION, pluginVersion: MIN_PLUGIN_VERSION }), undefined);
+  assert.equal(checkCompat({ protocol: PROTOCOL_VERSION, pluginVersion: "9.0.0" }), undefined);
+  // Plugins before 0.1.3 do not report their version.
+  assert.equal(checkCompat({ protocol: PROTOCOL_VERSION })?.outdated, "plugin");
+  assert.equal(checkCompat({ protocol: PROTOCOL_VERSION, pluginVersion: "0.1.2" })?.outdated, "plugin");
+  assert.equal(checkCompat({ protocol: PROTOCOL_VERSION - 1, pluginVersion: "9.0.0" })?.outdated, "plugin");
+  assert.equal(checkCompat({ protocol: PROTOCOL_VERSION + 1, pluginVersion: "9.0.0" })?.outdated, "extension");
 });

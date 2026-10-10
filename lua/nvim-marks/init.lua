@@ -9,6 +9,11 @@
 
 local M = {}
 
+--- Release of this plugin, sent with every payload so the VS Code extension
+--- can tell when the two halves drift apart. test/lua/spec.lua keeps it equal
+--- to the version in package.json.
+M.version = "0.1.3"
+
 local defaults = {
   --- Wrap `m` in normal mode so a newly set mark shows up immediately
   --- instead of after the next CursorHold.
@@ -49,7 +54,7 @@ local function abs(file)
 end
 
 --- Build the snapshot of all marks worth drawing.
---- @return table payload  { version = 1, locals = {...}, globals = {...} }
+--- @return table payload  { version = 1, plugin_version = "x.y.z", locals = {...}, globals = {...} }
 function M.collect()
   local locals = {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
@@ -92,7 +97,7 @@ function M.collect()
     end
   end
 
-  return { version = 1, locals = locals, globals = globals }
+  return { version = 1, plugin_version = M.version, locals = locals, globals = globals }
 end
 
 --- Send the snapshot now (no debounce). Skips the RPC if nothing changed.

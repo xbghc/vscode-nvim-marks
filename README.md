@@ -57,6 +57,13 @@ Commands (Command Palette):
   current file and other files; accepting jumps to the mark.
 - **Neovim Marks: Toggle mark decorations** — hide or show the decorations
   without touching Neovim.
+- **Neovim Marks: Show status** — print the versions of both halves, the number
+  of marks received and the active settings to the "Neovim Marks" output
+  channel. Start here when marks do not show up.
+
+The two halves are updated separately. The Neovim plugin sends its version with
+every payload, and the extension warns once when the plugin is older than it
+expects or when the two speak different protocol versions.
 
 Neovim side:
 

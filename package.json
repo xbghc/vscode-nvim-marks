@@ -2,7 +2,7 @@
   "name": "nvim-marks",
   "displayName": "Neovim Marks",
   "description": "Show Neovim marks in the VS Code gutter when using vscode-neovim. Marks stay native to Neovim; this extension only renders them.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "xbghc",
   "license": "MIT",
   "repository": {
@@ -49,6 +49,11 @@
       {
         "command": "nvimMarks.toggle",
         "title": "Neovim Marks: Toggle mark decorations",
+        "category": "Neovim Marks"
+      },
+      {
+        "command": "nvimMarks.status",
+        "title": "Neovim Marks: Show status",
         "category": "Neovim Marks"
       }
     ],

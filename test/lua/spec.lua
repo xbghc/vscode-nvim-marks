@@ -61,6 +61,9 @@ check(wait_for(function() return #actions >= 1 end), "initial sync is sent after
 check(actions[1] and actions[1].name == "nvimMarks.update", "initial sync targets nvimMarks.update")
 local p0 = last_payload()
 check(p0 and p0.version == 1 and type(p0.locals) == "table" and type(p0.globals) == "table", "payload has version/locals/globals")
+local pkg = vim.json.decode(table.concat(vim.fn.readfile(root .. "/package.json"), "\n"))
+check(marks.version == pkg.version, "plugin version equals package.json version " .. pkg.version)
+check(p0 and p0.plugin_version == marks.version, "payload carries the plugin version")
 
 -- 2. setting a local mark through the wrapped `m` triggers a push
 vim.cmd("edit " .. file_a)

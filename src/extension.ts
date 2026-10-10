@@ -2,13 +2,18 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import {
   buildStore,
+  checkCompat,
   decorationKey,
   groupByLine,
   makeNormalizer,
+  payloadInfo,
+  PROTOCOL_VERSION,
+  type CompatIssue,
   type Mark,
   type MarkKind,
   type MarkStore,
   type PathNormalizer,
+  type PayloadInfo,
 } from "./model";
 import { markIconUri, type IconColors } from "./icons";
 
@@ -72,6 +77,13 @@ class MarkRenderer implements vscode.Disposable {
     this.runtimeEnabled = !this.runtimeEnabled;
     this.applyAll();
     return this.runtimeEnabled;
+  }
+
+  /** One line for the status report: the settings that decide what is drawn. */
+  get settingsSummary(): string {
+    const s = this.settings;
+    const shown = s.enabled && this.runtimeEnabled ? "shown" : s.enabled ? "hidden by toggle" : "disabled";
+    return `${shown}, style=${s.style}, showLocalMarks=${s.showLocal}, showGlobalMarks=${s.showGlobal}`;
   }
 
   get allMarks(): Mark[] {
@@ -233,8 +245,24 @@ async function listMarks(renderer: MarkRenderer): Promise<void> {
   });
 }
 
+/** What the extension knows about both halves; printed by `nvimMarks.status`. */
+export interface NvimMarksStatus {
+  extensionVersion: string;
+  /** Payloads received since activation. */
+  updates: number;
+  /** From the last payload; undefined before the first one or when the plugin did not report it. */
+  pluginVersion?: string;
+  pluginProtocol?: number;
+  /** Set when the two halves do not fit together. */
+  issue?: CompatIssue;
+  localMarks: number;
+  globalMarks: number;
+}
+
 /** Public API returned from `activate`, reachable via `vscode.extensions.getExtension("xbghc.nvim-marks").exports`. */
 export interface NvimMarksApi {
+  /** Versions of both halves and mark counts. */
+  status(): NvimMarksStatus;
   /** All marks currently known, 0-based positions, normalized file keys. */
   marks(): Mark[];
   /** Marks known for one document. */
@@ -246,12 +274,72 @@ export interface NvimMarksApi {
 export function activate(context: vscode.ExtensionContext): NvimMarksApi {
   const output = vscode.window.createOutputChannel("Neovim Marks");
   const renderer = new MarkRenderer(output);
-  output.appendLine(`activated (${process.platform}, cwd ${path.basename(process.cwd())})`);
+  const extensionVersion = String(context.extension.packageJSON.version);
+  output.appendLine(`activated ${extensionVersion} (${process.platform}, cwd ${path.basename(process.cwd())})`);
+
+  let updates = 0;
+  let info: PayloadInfo | undefined;
+  let issue: CompatIssue | undefined;
+  const warned = new Set<string>();
+
+  const status = (): NvimMarksStatus => {
+    const marks = renderer.allMarks;
+    const s: NvimMarksStatus = {
+      extensionVersion,
+      updates,
+      localMarks: marks.filter((m) => m.kind === "local").length,
+      globalMarks: marks.filter((m) => m.kind === "global").length,
+    };
+    if (info?.pluginVersion !== undefined) s.pluginVersion = info.pluginVersion;
+    if (info?.protocol !== undefined) s.pluginProtocol = info.protocol;
+    if (issue) s.issue = issue;
+    return s;
+  };
+
+  const showStatus = (): void => {
+    const s = status();
+    const plugin =
+      s.updates === 0
+        ? "nothing received yet; is the nvim-marks plugin installed and Neovim running inside vscode-neovim?"
+        : `${s.pluginVersion ?? "version not reported"} (protocol ${s.pluginProtocol ?? "?"}), ${s.updates} payload(s) received`;
+    output.appendLine("status:");
+    output.appendLine(`  extension      ${s.extensionVersion} (protocol ${PROTOCOL_VERSION})`);
+    output.appendLine(`  neovim plugin  ${plugin}`);
+    output.appendLine(`  marks          ${s.localMarks} local (a-z), ${s.globalMarks} global (A-Z)`);
+    output.appendLine(`  decorations    ${renderer.settingsSummary}`);
+    output.appendLine(`  compatibility  ${s.issue ? s.issue.message : "ok"}`);
+    output.show(true);
+  };
+
+  /** Warn once per window about each distinct mismatch, and never again once dismissed. */
+  const warn = (i: CompatIssue): void => {
+    const key = `dismissed:${i.outdated}:${info?.pluginVersion ?? "?"}:${info?.protocol ?? "?"}:${extensionVersion}`;
+    if (warned.has(key) || context.globalState.get<boolean>(key)) return;
+    warned.add(key);
+    output.appendLine(`warning: ${i.message}`);
+    void vscode.window.showWarningMessage(`Neovim Marks: ${i.message}`, "Show Status", "Don't Show Again").then((choice) => {
+      if (choice === "Show Status") showStatus();
+      else if (choice === "Don't Show Again") void context.globalState.update(key, true);
+    });
+  };
+
+  const onUpdate = (payload: unknown): void => {
+    renderer.update(payload);
+    updates++;
+    const next = payloadInfo(payload);
+    if (updates === 1 || next?.pluginVersion !== info?.pluginVersion || next?.protocol !== info?.protocol) {
+      output.appendLine(`neovim plugin: ${next?.pluginVersion ?? "version not reported"} (protocol ${next?.protocol ?? "?"})`);
+    }
+    info = next;
+    issue = next ? checkCompat(next) : undefined;
+    if (issue) warn(issue);
+  };
 
   context.subscriptions.push(
     output,
     renderer,
-    vscode.commands.registerCommand("nvimMarks.update", (payload: unknown) => renderer.update(payload)),
+    vscode.commands.registerCommand("nvimMarks.update", onUpdate),
+    vscode.commands.registerCommand("nvimMarks.status", showStatus),
     vscode.commands.registerCommand("nvimMarks.list", () => listMarks(renderer)),
     vscode.commands.registerCommand("nvimMarks.toggle", () => {
       const on = renderer.toggle();
@@ -267,6 +355,7 @@ export function activate(context: vscode.ExtensionContext): NvimMarksApi {
   );
 
   return {
+    status,
     marks: () => renderer.allMarks,
     marksFor: (doc) => renderer.marksFor(doc),
     appliedFor: (doc) => renderer.appliedFor(doc),

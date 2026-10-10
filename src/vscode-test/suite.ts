@@ -36,9 +36,41 @@ async function api(): Promise<NvimMarksApi> {
 test("extension activates and registers its commands", async () => {
   await api();
   const cmds = await vscode.commands.getCommands(true);
-  for (const c of ["nvimMarks.update", "nvimMarks.list", "nvimMarks.toggle"]) {
+  for (const c of ["nvimMarks.update", "nvimMarks.list", "nvimMarks.toggle", "nvimMarks.status"]) {
     assert.ok(cmds.includes(c), `command ${c} registered`);
   }
+});
+
+test("status reports both versions and flags a mismatched half", async () => {
+  const a = await api();
+  const ext = vscode.extensions.getExtension("xbghc.nvim-marks")!;
+  const current = String(ext.packageJSON.version);
+  const before = a.status().updates;
+
+  await vscode.commands.executeCommand("nvimMarks.update", {
+    version: 1,
+    plugin_version: current,
+    locals: [{ file: fileA, marks: [{ name: "a", line: 1, col: 1 }] }],
+    globals: [{ name: "Q", file: fileA, line: 2, col: 1 }],
+  });
+  let s = a.status();
+  assert.equal(s.extensionVersion, current);
+  assert.equal(s.updates, before + 1);
+  assert.equal(s.pluginVersion, current);
+  assert.equal(s.pluginProtocol, 1);
+  assert.equal(s.issue, undefined, "a plugin of the same release as the extension is compatible");
+  assert.deepEqual([s.localMarks, s.globalMarks], [1, 1]);
+
+  // A plugin from before 0.1.3 does not report its version.
+  await vscode.commands.executeCommand("nvimMarks.update", { version: 1, locals: [], globals: [] });
+  s = a.status();
+  assert.equal(s.pluginVersion, undefined);
+  assert.equal(s.issue?.outdated, "plugin");
+
+  await vscode.commands.executeCommand("nvimMarks.update", { version: 99, plugin_version: "99.0.0", locals: [], globals: [] });
+  assert.equal(a.status().issue?.outdated, "extension");
+
+  await vscode.commands.executeCommand("nvimMarks.status");
 });
 
 test("update command stores marks and decorates the visible editor", async () => {
