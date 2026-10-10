@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2 (pre-release)
+
+- Fix: lowercase (buffer-local) marks were not shown under vscode-neovim, whose document buffers use `buftype=acwrite`.
+
 ## 0.1.1 (pre-release)
 
 - Marketplace icon.
