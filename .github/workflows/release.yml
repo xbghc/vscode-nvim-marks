@@ -1,8 +1,16 @@
 name: Release
 
-# Pushing a tag like v0.1.0 runs the full test matrix, publishes the extension
-# to the VS Code Marketplace with the VSCE_PAT secret, and attaches the .vsix
-# to a GitHub release. The tag must match the version in package.json.
+# Pushing a tag runs the full test matrix, publishes the extension to the
+# VS Code Marketplace with the VSCE_PAT secret, and attaches the .vsix to a
+# GitHub release.
+#
+#   v0.1.0          -> stable release
+#   v0.1.0-alpha.1  -> pre-release (users pick "Install Pre-Release Version")
+#
+# The part before the first "-" must equal the version in package.json. The
+# Marketplace only accepts plain major.minor.patch versions, so the suffix is
+# only used to flag the release as pre-release. By Marketplace convention the
+# pre-release line uses odd minor versions (0.1.x) and stable uses even (0.2.x).
 
 on:
   push:
@@ -23,12 +31,21 @@ jobs:
           cache: npm
       - run: npm ci
 
-      - name: Check tag matches package.json version
+      - name: Check tag matches package.json version, detect pre-release
+        id: ver
         run: |
           pkg="v$(node -p "require('./package.json').version")"
-          if [ "$pkg" != "${GITHUB_REF_NAME}" ]; then
+          base="${GITHUB_REF_NAME%%-*}"
+          if [ "$pkg" != "$base" ]; then
             echo "tag ${GITHUB_REF_NAME} does not match package.json version ${pkg}" >&2
             exit 1
+          fi
+          if [ "$base" != "${GITHUB_REF_NAME}" ]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "flag=--pre-release" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "flag=" >> "$GITHUB_OUTPUT"
           fi
 
       - run: npm test
@@ -41,16 +58,16 @@ jobs:
       - run: npm run test:lua
 
       - name: Package
-        run: npx vsce package --no-dependencies
+        run: npx vsce package --no-dependencies ${{ steps.ver.outputs.flag }}
 
       - name: Publish to VS Code Marketplace
-        run: npx vsce publish --no-dependencies --packagePath ./*.vsix
+        run: npx vsce publish --no-dependencies ${{ steps.ver.outputs.flag }} --packagePath ./*.vsix
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
       - name: Publish to Open VSX (only if OVSX_PAT is set)
         if: ${{ env.OVSX_PAT != '' }}
-        run: npx ovsx publish ./*.vsix -p "$OVSX_PAT"
+        run: npx ovsx publish ./*.vsix -p "$OVSX_PAT" ${{ steps.ver.outputs.flag }}
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
 
@@ -59,3 +76,4 @@ jobs:
         with:
           files: "*.vsix"
           generate_release_notes: true
+          prerelease: ${{ steps.ver.outputs.prerelease == 'true' }}
