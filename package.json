@@ -1,0 +1,155 @@
+{
+  "name": "nvim-marks",
+  "displayName": "Neovim Marks",
+  "description": "Show Neovim marks in the VS Code gutter when using vscode-neovim. Marks stay native to Neovim; this extension only renders them.",
+  "version": "0.1.0",
+  "publisher": "xbghc",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xbghc/vscode-nvim-marks.git"
+  },
+  "bugs": {
+    "url": "https://github.com/xbghc/vscode-nvim-marks/issues"
+  },
+  "homepage": "https://github.com/xbghc/vscode-nvim-marks#readme",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "neovim",
+    "vscode-neovim",
+    "marks",
+    "vim",
+    "gutter"
+  ],
+  "extensionKind": [
+    "workspace",
+    "ui"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "nvimMarks.update",
+        "title": "Neovim Marks: Receive marks from Neovim (internal)",
+        "category": "Neovim Marks"
+      },
+      {
+        "command": "nvimMarks.list",
+        "title": "Neovim Marks: List marks",
+        "category": "Neovim Marks"
+      },
+      {
+        "command": "nvimMarks.toggle",
+        "title": "Neovim Marks: Toggle mark decorations",
+        "category": "Neovim Marks"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "nvimMarks.update",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Neovim Marks",
+      "properties": {
+        "nvimMarks.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Render Neovim marks in the editor."
+        },
+        "nvimMarks.style": {
+          "type": "string",
+          "enum": [
+            "gutter",
+            "eol",
+            "both"
+          ],
+          "enumDescriptions": [
+            "Letter icon in the gutter, like Neovim's sign column.",
+            "Letter after the end of the line, like virtual text.",
+            "Both gutter icon and end-of-line text."
+          ],
+          "default": "gutter",
+          "description": "How marks are displayed."
+        },
+        "nvimMarks.overviewRuler": {
+          "type": "boolean",
+          "default": true,
+          "description": "Also show marks in the overview ruler (scrollbar)."
+        },
+        "nvimMarks.showGlobalMarks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show uppercase (global, cross-file) marks A-Z."
+        },
+        "nvimMarks.showLocalMarks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show lowercase (buffer-local) marks a-z."
+        },
+        "nvimMarks.localColor": {
+          "type": "object",
+          "properties": {
+            "light": {
+              "type": "string"
+            },
+            "dark": {
+              "type": "string"
+            }
+          },
+          "default": {
+            "light": "#4d4d4d",
+            "dark": "#bdbdbd"
+          },
+          "description": "Color of lowercase mark letters, per theme kind."
+        },
+        "nvimMarks.globalColor": {
+          "type": "object",
+          "properties": {
+            "light": {
+              "type": "string"
+            },
+            "dark": {
+              "type": "string"
+            }
+          },
+          "default": {
+            "light": "#1a1a1a",
+            "dark": "#f2f2f2"
+          },
+          "description": "Color of uppercase mark letters, per theme kind."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --sourcemap",
+    "watch": "npm run build -- --watch",
+    "vscode:prepublish": "npm run typecheck && npm run build -- --minify",
+    "typecheck": "tsc --noEmit -p ./",
+    "test": "npm run typecheck && tsc -p tsconfig.test.json && node --test out-test/test/*.test.js",
+    "test:lua": "bash test/lua/run.sh",
+    "package": "vsce package --no-dependencies",
+    "test:vscode": "tsc -p tsconfig.vscode-test.json && node out-vscode-test/vscode-test/runTests.js",
+    "test:all": "npm test && npm run test:vscode && npm run test:lua"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "out-test",
+    "rootDir": "src",
+    "sourceMap": false
+  },
+  "include": ["src/model.ts", "src/icons.ts", "src/test/**/*.ts"],
+  "exclude": ["node_modules"]
+}
