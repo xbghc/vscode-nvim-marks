@@ -53,7 +53,9 @@ end
 function M.collect()
   local locals = {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].buftype == "" then
+    -- vscode-neovim sets buftype=acwrite on every document buffer.
+    local buftype = vim.bo[buf].buftype
+    if vim.api.nvim_buf_is_loaded(buf) and (buftype == "" or buftype == "acwrite") then
       local file = abs(vim.api.nvim_buf_get_name(buf))
       if file then
         local marks = {}

@@ -113,6 +113,18 @@ end
 check(seen[vim.fn.fnamemodify(file_b, ":p")] ~= nil, "marks of the second buffer are included")
 check(find(p.globals, "B") ~= nil, "global mark B survives switching buffers")
 
+-- 6b. vscode-neovim document buffers are buftype=acwrite; their local marks must still be sent
+vim.bo.buftype = "acwrite"
+marks.sync(true)
+p = last_payload()
+local acwrite_entry = nil
+for _, e in ipairs(p.locals) do
+  if e.file == vim.fn.fnamemodify(file_b, ":p") then
+    acwrite_entry = e
+  end
+end
+check(acwrite_entry ~= nil and find(acwrite_entry.marks, "c") ~= nil, "local marks of a buftype=acwrite buffer are included")
+
 -- 7. special marks are never sent
 local ok_special = true
 for _, e in ipairs(p.locals) do
