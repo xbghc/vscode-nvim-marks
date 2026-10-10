@@ -36,8 +36,10 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             tag="${{ github.event.inputs.tag }}"
-            git tag "$tag"
-            git push origin "refs/tags/$tag"
+            # A manual run (re)points the tag at the commit being released, so
+            # a failed attempt can be retried with the same tag.
+            git tag -f "$tag"
+            git push -f origin "refs/tags/$tag"
           else
             tag="${GITHUB_REF_NAME}"
           fi

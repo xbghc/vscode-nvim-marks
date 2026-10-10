@@ -141,16 +141,16 @@
     "test": "npm run typecheck && tsc -p tsconfig.test.json && node --test out-test/test/*.test.js",
     "test:lua": "bash test/lua/run.sh",
     "package": "vsce package --no-dependencies",
-    "test:vscode": "tsc -p tsconfig.vscode-test.json && node out-vscode-test/vscode-test/runTests.js",
+    "test:vscode": "npm run build && tsc -p tsconfig.vscode-test.json && node out-vscode-test/vscode-test/runTests.js",
     "test:all": "npm test && npm run test:vscode && npm run test:lua"
   },
   "devDependencies": {
-    "@types/node": "^20.14.0",
+    "@types/node": "^22.20.5",
     "@types/vscode": "^1.85.0",
-    "@vscode/test-electron": "^2.5.2",
-    "@vscode/vsce": "^3.2.0",
-    "esbuild": "^0.24.0",
-    "typescript": "^5.6.0"
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
   },
   "icon": "images/icon.png",
   "galleryBanner": {
