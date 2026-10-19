@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5 (pre-release)
+
+- Warn when the Neovim plugin predates 0.1.4 and cannot provide the backtick mark picker; explain how to update it and reload VS Code.
+- Add an opt-in integration test through the real vscode-neovim bridge, covering backtick input, fresh marks, jumps and cancellation.
+- Run Lua tests directly on Windows without WSL, and normalize Windows paths in the VS Code test assertions.
+
 ## 0.1.4 (pre-release)
 
 - Press backtick in normal mode to open the native VS Code mark picker with a fresh Neovim snapshot. Set `map_backtick = false` to retain native normal-mode backtick jumps.

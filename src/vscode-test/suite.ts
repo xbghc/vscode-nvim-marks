@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import assert from "node:assert/strict";
 import type { NvimMarksApi } from "../extension";
-import type { WirePayload } from "../model";
+import { makeNormalizer, type WirePayload } from "../model";
 
 type TestFn = () => Promise<void> | void;
 const tests: Array<[string, TestFn]> = [];
@@ -26,6 +26,12 @@ const ws = process.env.NVIM_MARKS_TEST_WORKSPACE!;
 const fileA = path.join(ws, "a.txt");
 const fileB = path.join(ws, "b.txt");
 const fileUnicode = path.join(ws, "unicode.txt");
+const normalize = makeNormalizer(process.platform);
+
+function activeFileKey(): string | undefined {
+  const uri = vscode.window.activeTextEditor?.document.uri;
+  return uri?.scheme === "file" ? normalize(uri.fsPath) : undefined;
+}
 
 async function api(): Promise<NvimMarksApi> {
   const ext = vscode.extensions.getExtension<NvimMarksApi>("xbghc.nvim-marks");
@@ -106,6 +112,15 @@ test("status reports both versions and flags a mismatched half", async () => {
   assert.equal(s.pluginVersion, undefined);
   assert.equal(s.issue?.outdated, "plugin");
 
+  // Version reporting alone is not enough: 0.1.3 lacks the backtick mapping.
+  await vscode.commands.executeCommand("nvimMarks.update", { version: 1, plugin_version: "0.1.3", locals: [], globals: [] });
+  s = a.status();
+  assert.equal(s.issue?.outdated, "plugin");
+  assert.match(s.issue!.message, /:Lazy update vscode-nvim-marks/);
+  assert.match(s.issue!.message, /reload the VS Code window/);
+  await vscode.commands.executeCommand("nvimMarks.update", { version: 1, plugin_version: "0.1.4", locals: [], globals: [] });
+  assert.equal(a.status().issue, undefined, "the first plugin with the backtick mapping is compatible");
+
   await vscode.commands.executeCommand("nvimMarks.update", { version: 99, plugin_version: "99.0.0", locals: [], globals: [] });
   assert.equal(a.status().issue?.outdated, "extension");
 
@@ -140,7 +155,7 @@ test("update command stores marks and decorates the visible editor", async () =>
   assert.deepEqual([...applied.keys()].sort(), ["global:cQ", "local:ab"]);
   assert.equal(applied.get("local:ab")![0].start.line, 1);
   assert.equal(applied.get("global:cQ")![0].start.line, 3);
-  assert.equal(editor.document.uri.fsPath, doc.uri.fsPath);
+  assert.equal(normalize(editor.document.uri.fsPath), normalize(doc.uri.fsPath));
 });
 
 test("a later update replaces the previous snapshot", async () => {
@@ -218,7 +233,7 @@ test("list command opens a quick pick and jumps on accept", async () => {
   await vscode.window.showTextDocument(docB);
 
   await useMarkPicker("accept");
-  await waitFor(() => vscode.window.activeTextEditor?.document.uri.fsPath === fileA);
+  await waitFor(() => activeFileKey() === normalize(fileA));
   const sel = vscode.window.activeTextEditor!.selection.active;
   assert.equal(sel.line, 3);
   assert.equal(sel.character, 2);
@@ -247,7 +262,7 @@ test("list uses its fresh payload before the first selection, replacing the old 
     assert.deepEqual(a.marksFor(docA), [], "marks missing from the new payload are removed");
   });
 
-  await waitFor(() => vscode.window.activeTextEditor?.document.uri.fsPath === fileB);
+  await waitFor(() => activeFileKey() === normalize(fileB));
   const sel = vscode.window.activeTextEditor!.selection.active;
   assert.deepEqual([sel.line, sel.character], [1, 1], "the picker jumps to the fresh mark, not the stale current-file mark");
 });
@@ -266,7 +281,7 @@ test("cancelling a mark picker preserves the current file and selection", async 
     globals: [{ name: "J", file: fileB, line: 2, col: 2 }],
   });
 
-  assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath, fileA);
+  assert.equal(activeFileKey(), normalize(fileA));
   const selection = vscode.window.activeTextEditor!.selection;
   assert.ok(selection.anchor.isEqual(original.anchor), "selection anchor is preserved");
   assert.ok(selection.active.isEqual(original.active), "selection direction and active position are preserved");
@@ -294,7 +309,7 @@ test("an empty fresh payload opens a dismissible picker without reusing old mark
     assert.equal(a.marks().length, 0, "an empty payload also replaces the old snapshot");
   });
 
-  assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath, fileA);
+  assert.equal(activeFileKey(), normalize(fileA));
   assert.ok(vscode.window.activeTextEditor!.selection.active.isEqual(original.active));
 });
 
@@ -312,7 +327,7 @@ test("mark jumps translate Neovim byte columns correctly across Chinese text and
       globals: [{ name: "U", file: fileUnicode, line: 2, col: wireColumn }],
     });
 
-    await waitFor(() => vscode.window.activeTextEditor?.document.uri.fsPath === fileUnicode);
+    await waitFor(() => activeFileKey() === normalize(fileUnicode));
     const editor = vscode.window.activeTextEditor!;
     assert.deepEqual([editor.selection.active.line, editor.selection.active.character], [1, character]);
     assert.equal(editor.document.getText(new vscode.Range(1, character, 1, character + target.length)), target);
@@ -331,7 +346,7 @@ test("mark jumps clamp stale line and column positions to the document", async (
       globals: [{ name: "J", file: fileB, line: wireLine, col: 999 }],
     });
 
-    await waitFor(() => vscode.window.activeTextEditor?.document.uri.fsPath === fileB);
+    await waitFor(() => activeFileKey() === normalize(fileB));
     const editor = vscode.window.activeTextEditor!;
     const end = editor.document.lineAt(expectedLine).range.end;
     assert.ok(editor.selection.active.isEqual(end), "an out-of-range mark lands at the valid line end");

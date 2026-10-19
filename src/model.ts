@@ -78,10 +78,10 @@ function num(x: unknown): number | undefined {
 export const PROTOCOL_VERSION = 1;
 
 /**
- * Oldest Neovim plugin release that needs no update. 0.1.3 is the first one
- * that reports `plugin_version`, so a plugin silent about its version is older.
+ * Oldest Neovim plugin release that needs no update. 0.1.4 introduced the
+ * backtick picker mapping; earlier releases cannot provide that shortcut.
  */
-export const MIN_PLUGIN_VERSION = "0.1.3";
+export const MIN_PLUGIN_VERSION = "0.1.4";
 
 /** What a payload says about the Neovim half. */
 export interface PayloadInfo {
@@ -125,7 +125,7 @@ export function payloadInfo(raw: unknown): PayloadInfo | undefined {
 /** Decide whether the two halves fit together; undefined means they do. */
 export function checkCompat(info: PayloadInfo): CompatIssue | undefined {
   const { protocol, pluginVersion } = info;
-  const updatePlugin = "Update it in Neovim (e.g. `:Lazy update vscode-nvim-marks`) and reload the window.";
+  const updatePlugin = "Update the Neovim plugin (e.g. `:Lazy update vscode-nvim-marks`) and reload the VS Code window.";
   if (protocol !== undefined && protocol > PROTOCOL_VERSION) {
     return {
       outdated: "extension",

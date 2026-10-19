@@ -157,8 +157,31 @@ npm install
 npm test             # typecheck + unit tests (node:test)
 npm run test:vscode  # integration tests in a real VS Code (xvfb-run -a on Linux)
 npm run test:lua     # headless Neovim test of the Lua plugin (needs nvim)
+npm run test:neovim  # real vscode-neovim bridge test (see below)
 npm run package      # build the .vsix
 ```
+
+The bridge test uses an installed `asvetliakov.vscode-neovim` extension, an
+isolated VS Code profile and a minimal Neovim config loading this checkout.
+Set `NVIM_MARKS_NEOVIM_EXTENSION` to the installed extension directory when it
+is not under `~/.vscode/extensions`. Set `VSCODE_EXECUTABLE_PATH` to a local
+VS Code executable to run either VS Code test suite without downloading it.
+
+### Backtick does nothing
+
+Both installed halves must be **0.1.4 or newer**. Updating this repository or
+installing a new VSIX does not update the separate Neovim plugin.
+
+1. Update **Neovim Marks** in VS Code (choose **Switch to Pre-Release Version**
+   for the 0.1.x releases), or install the VSIX from GitHub Releases.
+2. In Neovim, run `:Lazy update vscode-nvim-marks` (or update it with your plugin
+   manager). Keep its lockfile in sync so a restore does not reinstall an old version.
+3. Run **Developer: Reload Window** in VS Code. In **Normal mode**, press the
+   backtick key. Even with no marks, an empty mark picker should open.
+4. Use **Neovim Marks: Show status** to check both versions. If the Lua side
+   has not sent anything, confirm its `setup()` runs inside vscode-neovim.
+   If both versions are current, check `:verbose nmap <Char-96>` for another
+   mapping and ensure `map_backtick` is not `false`.
 
 ## License
 

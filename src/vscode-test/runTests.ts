@@ -18,9 +18,10 @@ async function main(): Promise<void> {
 
   try {
     await runTests({
+      vscodeExecutablePath: process.env.VSCODE_EXECUTABLE_PATH,
       extensionDevelopmentPath,
       extensionTestsPath,
-      launchArgs: [workspace, "--disable-extensions", "--disable-gpu", "--no-sandbox"],
+      launchArgs: [workspace, "--disable-extensions", "--disable-gpu", "--no-sandbox", "--skip-welcome", "--skip-release-notes"],
       extensionTestsEnv: { NVIM_MARKS_TEST_WORKSPACE: workspace },
     });
   } finally {

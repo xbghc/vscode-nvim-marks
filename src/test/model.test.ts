@@ -140,3 +140,13 @@ test("checkCompat names the half that has to be updated", () => {
   assert.equal(checkCompat({ protocol: PROTOCOL_VERSION - 1, pluginVersion: "9.0.0" })?.outdated, "plugin");
   assert.equal(checkCompat({ protocol: PROTOCOL_VERSION + 1, pluginVersion: "9.0.0" })?.outdated, "extension");
 });
+
+test("checkCompat warns about plugins without the backtick picker mapping", () => {
+  const issue = checkCompat({ protocol: PROTOCOL_VERSION, pluginVersion: "0.1.3" });
+  assert.equal(issue?.outdated, "plugin");
+  assert.match(issue!.message, /0\.1\.4 or newer/);
+  assert.match(issue!.message, /Update the Neovim plugin/);
+  assert.match(issue!.message, /:Lazy update vscode-nvim-marks/);
+  assert.match(issue!.message, /reload the VS Code window/);
+  assert.equal(checkCompat({ protocol: PROTOCOL_VERSION, pluginVersion: "0.1.4" }), undefined);
+});
