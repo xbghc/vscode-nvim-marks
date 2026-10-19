@@ -14,6 +14,7 @@ async function main(): Promise<void> {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "nvim-marks-ws-"));
   fs.writeFileSync(path.join(workspace, "a.txt"), ["line 1", "line 2", "line 3", "line 4", "line 5"].join("\n"));
   fs.writeFileSync(path.join(workspace, "b.txt"), ["b 1", "b 2", "b 3"].join("\n"));
+  fs.writeFileSync(path.join(workspace, "unicode.txt"), ["header", "甲😀乙 target", "tail"].join("\n"));
 
   try {
     await runTests({

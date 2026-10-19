@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Press backtick in normal mode to open the native VS Code mark picker with a fresh Neovim snapshot. Set `map_backtick = false` to retain native normal-mode backtick jumps.
+- Every picker item shows the mark, file name, path, line and column, with searchable source text for open documents. Multi-root workspace paths include the folder name.
+- Keep the picker available when no marks exist, and show an actionable message when a marked file cannot be opened.
+- Correct mark jumps on lines with non-ASCII text by converting Neovim's UTF-8 byte columns to VS Code's UTF-16 offsets; clamp stale positions to the document bounds.
+
 ## 0.1.3 (pre-release)
 
 - The Neovim plugin reports its version with every payload; the extension warns once when the plugin is outdated or the two halves speak different protocol versions.

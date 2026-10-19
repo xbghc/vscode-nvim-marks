@@ -5,9 +5,9 @@ Shows your Neovim marks in the VS Code gutter when you use
 
 vscode-neovim forces `signcolumn=no`, so plugins that draw marks in the sign
 column render nothing inside VS Code. This project fills that gap without
-moving marks out of Neovim: `ma`, `'a`, `` `a ``, `d'a`, `:'a,'bs/…/…/`,
-`:marks` and `:delmarks` keep their native behaviour, and the VS Code side only
-draws what Neovim reports.
+moving marks out of Neovim: `ma`, `'a`, `d'a`, `:'a,'bs/…/…/`, `:marks` and
+`:delmarks` keep their native behaviour. Press the backtick key (`` ` ``) in
+normal mode to open a VS Code Quick Pick of your marks and jump to a location.
 
 The repository contains two halves that are installed separately:
 
@@ -51,6 +51,27 @@ lowercase marks as a plain letter, uppercase (global) marks as a letter inside
 a rounded frame. When several marks sit on one line the icon shows the first
 two letters, or one letter and `+`.
 
+Press **backtick (`` ` ``)** in normal mode to open the mark picker, using the
+same native VS Code UI as Quick Open (`Cmd+P` / `Ctrl+P`). Every mark shows its
+letter, file name, path and `line:column`; marks in the current file come first,
+followed by marks in other files. Source text is included for open documents.
+Type to filter by mark, file, path, position or source text, use the arrow keys
+to select a result, then press **Enter** to jump. **Esc** closes the picker
+without moving the cursor. With no marks, the picker explains how to set one.
+
+The shortcut collects the latest marks when pressed, so it also picks up a
+just-created or moved mark before the usual debounced update. Both the VS Code
+extension and the Neovim plugin need to be updated to get this shortcut.
+
+Locations use Neovim's 1-based line and byte column. When jumping, columns are
+converted to VS Code's character offsets, including on lines with non-ASCII
+text. In a multi-root workspace, paths include the workspace folder name.
+
+The default normal-mode backtick mapping replaces native backtick-prefixed
+jumps such as `` `a ``. Set `map_backtick = false` in the Neovim plugin options to keep those
+bindings and use the **Neovim Marks: List marks** command instead. Insert mode,
+visual mode and operator-pending motions such as `` d`a `` stay native.
+
 Commands (Command Palette):
 
 - **Neovim Marks: List marks** — QuickPick of all known marks, grouped into the
@@ -70,6 +91,7 @@ Neovim side:
 - `:NvimMarksRefresh` — resend all marks, e.g. after reloading the VS Code
   window.
 - `require("nvim-marks").sync(true)` — same thing from Lua.
+- `require("nvim-marks").list()` — open the picker with a fresh snapshot.
 
 ### Settings
 
@@ -88,6 +110,7 @@ Neovim `setup()` options:
 ```lua
 require("nvim-marks").setup({
   map_m = true,          -- wrap `m` so a new mark shows up immediately
+  map_backtick = true,   -- open the mark picker with ` in normal mode
   debounce_ms = 60,      -- coalesce bursts of events into one push
   extra_events = {},     -- additional autocmd events that trigger a sync
   command = "nvimMarks.update",
