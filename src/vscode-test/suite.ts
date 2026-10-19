@@ -6,6 +6,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import assert from "node:assert/strict";
 import type { NvimMarksApi } from "../extension";
+import type { WirePayload } from "../model";
 
 type TestFn = () => Promise<void> | void;
 const tests: Array<[string, TestFn]> = [];
@@ -24,6 +25,7 @@ async function waitFor(pred: () => boolean, ms = 3000): Promise<void> {
 const ws = process.env.NVIM_MARKS_TEST_WORKSPACE!;
 const fileA = path.join(ws, "a.txt");
 const fileB = path.join(ws, "b.txt");
+const fileUnicode = path.join(ws, "unicode.txt");
 
 async function api(): Promise<NvimMarksApi> {
   const ext = vscode.extensions.getExtension<NvimMarksApi>("xbghc.nvim-marks");
@@ -31,6 +33,43 @@ async function api(): Promise<NvimMarksApi> {
   const exports = await ext.activate();
   assert.ok(exports, "activate() returns the API object");
   return exports;
+}
+
+async function useMarkPicker(
+  action: "accept" | "cancel",
+  payload?: WirePayload,
+  beforeClose?: () => void | Promise<void>,
+): Promise<void> {
+  const command = payload === undefined
+    ? vscode.commands.executeCommand("nvimMarks.list")
+    : vscode.commands.executeCommand("nvimMarks.list", payload);
+  let finished = false;
+  // Handle rejection immediately, including if the command fails before the UI opens.
+  const result = Promise.resolve(command).then(
+    () => ({ ok: true as const }),
+    (error: unknown) => ({ ok: false as const, error }),
+  );
+  void result.then(() => { finished = true; });
+
+  try {
+    // The public API does not expose another extension's QuickPick. Drive it with
+    // normal workbench commands and bound completion so a failed picker cannot hang CI.
+    await sleep(500);
+    if (finished) {
+      const outcome = await result;
+      if (!outcome.ok) throw outcome.error;
+    }
+    assert.equal(finished, false, "the list command stays open until the picker is accepted or cancelled");
+    await beforeClose?.();
+    await vscode.commands.executeCommand(
+      action === "accept" ? "workbench.action.acceptSelectedQuickOpenItem" : "workbench.action.closeQuickOpen",
+    );
+    await waitFor(() => finished, 5000);
+    const outcome = await result;
+    if (!outcome.ok) throw outcome.error;
+  } finally {
+    await vscode.commands.executeCommand("workbench.action.closeQuickOpen");
+  }
 }
 
 test("extension activates and registers its commands", async () => {
@@ -178,15 +217,125 @@ test("list command opens a quick pick and jumps on accept", async () => {
   const docB = await vscode.workspace.openTextDocument(vscode.Uri.file(fileB));
   await vscode.window.showTextDocument(docB);
 
-  const done = vscode.commands.executeCommand("nvimMarks.list");
-  // Give the quick pick time to appear, then accept the first (only) item.
-  await sleep(500);
-  await vscode.commands.executeCommand("workbench.action.acceptSelectedQuickOpenItem");
-  await done;
+  await useMarkPicker("accept");
   await waitFor(() => vscode.window.activeTextEditor?.document.uri.fsPath === fileA);
   const sel = vscode.window.activeTextEditor!.selection.active;
   assert.equal(sel.line, 3);
   assert.equal(sel.character, 2);
+});
+
+test("list uses its fresh payload before the first selection, replacing the old snapshot", async () => {
+  const a = await api();
+  const docA = await vscode.workspace.openTextDocument(vscode.Uri.file(fileA));
+  await vscode.window.showTextDocument(docA);
+  await vscode.commands.executeCommand("nvimMarks.update", {
+    version: 1,
+    plugin_version: a.status().extensionVersion,
+    locals: [{ file: fileA, marks: [{ name: "x", line: 1, col: 1 }] }],
+    globals: [],
+  });
+  const before = a.status().updates;
+
+  await useMarkPicker("accept", {
+    version: 1,
+    plugin_version: a.status().extensionVersion,
+    locals: [],
+    globals: [{ name: "J", file: fileB, line: 2, col: 2 }],
+  }, () => {
+    assert.equal(a.status().updates, before + 1, "the fresh payload is received before accepting the picker");
+    assert.deepEqual(a.marks().map((m) => m.name), ["J"]);
+    assert.deepEqual(a.marksFor(docA), [], "marks missing from the new payload are removed");
+  });
+
+  await waitFor(() => vscode.window.activeTextEditor?.document.uri.fsPath === fileB);
+  const sel = vscode.window.activeTextEditor!.selection.active;
+  assert.deepEqual([sel.line, sel.character], [1, 1], "the picker jumps to the fresh mark, not the stale current-file mark");
+});
+
+test("cancelling a mark picker preserves the current file and selection", async () => {
+  const a = await api();
+  const docA = await vscode.workspace.openTextDocument(vscode.Uri.file(fileA));
+  const editor = await vscode.window.showTextDocument(docA);
+  const original = new vscode.Selection(3, 4, 1, 2);
+  editor.selection = original;
+
+  await useMarkPicker("cancel", {
+    version: 1,
+    plugin_version: a.status().extensionVersion,
+    locals: [],
+    globals: [{ name: "J", file: fileB, line: 2, col: 2 }],
+  });
+
+  assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath, fileA);
+  const selection = vscode.window.activeTextEditor!.selection;
+  assert.ok(selection.anchor.isEqual(original.anchor), "selection anchor is preserved");
+  assert.ok(selection.active.isEqual(original.active), "selection direction and active position are preserved");
+});
+
+test("an empty fresh payload opens a dismissible picker without reusing old marks", async () => {
+  const a = await api();
+  const docA = await vscode.workspace.openTextDocument(vscode.Uri.file(fileA));
+  const editor = await vscode.window.showTextDocument(docA);
+  const original = new vscode.Selection(2, 3, 2, 3);
+  editor.selection = original;
+  await vscode.commands.executeCommand("nvimMarks.update", {
+    version: 1,
+    plugin_version: a.status().extensionVersion,
+    locals: [],
+    globals: [{ name: "J", file: fileB, line: 2, col: 2 }],
+  });
+
+  await useMarkPicker("cancel", {
+    version: 1,
+    plugin_version: a.status().extensionVersion,
+    locals: [],
+    globals: [],
+  }, () => {
+    assert.equal(a.marks().length, 0, "an empty payload also replaces the old snapshot");
+  });
+
+  assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath, fileA);
+  assert.ok(vscode.window.activeTextEditor!.selection.active.isEqual(original.active));
+});
+
+test("mark jumps translate Neovim byte columns correctly across Chinese text and emoji", async () => {
+  const a = await api();
+  const docA = await vscode.workspace.openTextDocument(vscode.Uri.file(fileA));
+  // In "甲😀乙 target", the emoji starts at byte column 4 and "target" at 12.
+  // Their VS Code UTF-16 character offsets are 1 and 5 respectively.
+  for (const [wireColumn, character, target] of [[4, 1, "😀"], [12, 5, "target"]] as const) {
+    await vscode.window.showTextDocument(docA);
+    await useMarkPicker("accept", {
+      version: 1,
+      plugin_version: a.status().extensionVersion,
+      locals: [],
+      globals: [{ name: "U", file: fileUnicode, line: 2, col: wireColumn }],
+    });
+
+    await waitFor(() => vscode.window.activeTextEditor?.document.uri.fsPath === fileUnicode);
+    const editor = vscode.window.activeTextEditor!;
+    assert.deepEqual([editor.selection.active.line, editor.selection.active.character], [1, character]);
+    assert.equal(editor.document.getText(new vscode.Range(1, character, 1, character + target.length)), target);
+  }
+});
+
+test("mark jumps clamp stale line and column positions to the document", async () => {
+  const a = await api();
+  const docA = await vscode.workspace.openTextDocument(vscode.Uri.file(fileA));
+  for (const [wireLine, expectedLine] of [[2, 1], [999, 2]] as const) {
+    await vscode.window.showTextDocument(docA);
+    await useMarkPicker("accept", {
+      version: 1,
+      plugin_version: a.status().extensionVersion,
+      locals: [],
+      globals: [{ name: "J", file: fileB, line: wireLine, col: 999 }],
+    });
+
+    await waitFor(() => vscode.window.activeTextEditor?.document.uri.fsPath === fileB);
+    const editor = vscode.window.activeTextEditor!;
+    const end = editor.document.lineAt(expectedLine).range.end;
+    assert.ok(editor.selection.active.isEqual(end), "an out-of-range mark lands at the valid line end");
+  }
 });
 
 export async function run(): Promise<void> {

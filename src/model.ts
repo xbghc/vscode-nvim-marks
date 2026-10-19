@@ -5,7 +5,7 @@
 
 export type MarkKind = "local" | "global";
 
-/** One mark as sent by the Neovim side (1-based line/col). */
+/** One mark as sent by the Neovim side (1-based line/UTF-8 byte column). */
 export interface WireMark {
   name: string;
   line: number;
@@ -39,7 +39,7 @@ export interface Mark {
   file: string;
   /** 0-based line. */
   line: number;
-  /** 0-based column. */
+  /** 0-based UTF-8 byte column, as reported by Neovim. */
   col: number;
 }
 

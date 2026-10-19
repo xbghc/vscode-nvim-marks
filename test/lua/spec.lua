@@ -36,6 +36,18 @@ local function last_payload()
   return a and a.args[1] or nil
 end
 
+local function action_count(name)
+  local count = 0
+  for _, a in ipairs(actions) do
+    if a.name == name then count = count + 1 end
+  end
+  return count
+end
+
+local function feed(keys)
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "x", false)
+end
+
 local function find(list, name)
   for _, m in ipairs(list or {}) do
     if m.name == name then
@@ -140,13 +152,97 @@ for _, m in ipairs(p.globals) do
 end
 check(ok_special, "only a-z and A-Z marks are sent")
 
--- 8. outside VS Code, setup is a no-op and does not require the vscode module
+-- 8. ` opens the picker with marks collected at the moment it is pressed.
+check(marks.config.map_backtick == true, "the backtick picker mapping is enabled by default")
+check(vim.fn.maparg("`", "n") ~= "", "backtick is mapped in normal mode")
+for _, mode in ipairs({ "i", "x", "o" }) do
+  check(vim.fn.maparg("`", mode) == "", "backtick is not mapped in mode " .. mode)
+end
+vim.wait(50)
+vim.api.nvim_buf_set_mark(0, "d", 1, 0, {})
+marks.sync(true)
+vim.api.nvim_buf_set_mark(0, "d", 3, 1, {})
+n = #actions
+feed("`")
+check(#actions == n + 1 and actions[#actions].name == "nvimMarks.list", "backtick sends one list RPC without a separate sync")
+p = last_payload()
+local listed_entry = nil
+for _, e in ipairs(p.locals) do
+  if e.file == vim.fn.fnamemodify(file_b, ":p") then listed_entry = e end
+end
+local md = listed_entry and find(listed_entry.marks, "d")
+check(md and md.line == 3 and md.col == 2, "the list RPC includes a mark moved since the last sync")
+check(p.plugin_version == marks.version and find(p.globals, "B") ~= nil, "the list RPC carries the complete versioned snapshot")
+n = #actions
+check(marks.list() and #actions == n + 1 and actions[#actions].name == "nvimMarks.list", "list() also opens the picker when marks have not changed")
+
+-- 9. Neovim still owns operator motions and arguments to native commands.
+local document_buf = vim.api.nvim_get_current_buf()
+local native_buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_set_current_buf(native_buf)
+local list_count = action_count("nvimMarks.list")
+vim.api.nvim_buf_set_lines(0, 0, -1, false, { "one two three" })
+vim.api.nvim_buf_set_mark(0, "a", 1, 4, {})
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+feed("d`a")
+check(vim.api.nvim_get_current_line() == "two three", "d`a keeps its native operator-pending behavior")
+vim.api.nvim_buf_set_lines(0, 0, -1, false, { "a`b" })
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+feed("f`")
+check(vim.api.nvim_win_get_cursor(0)[2] == 1, "f` still finds a literal backtick")
+vim.api.nvim_buf_set_lines(0, 0, -1, false, { "abc" })
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+feed("r`")
+check(vim.api.nvim_get_current_line() == "`bc", "r` still replaces a character with a backtick")
+vim.api.nvim_win_set_cursor(0, { 1, 1 })
+feed("m`")
+check(vim.fn.getpos("''")[3] == 2, "wrapped m` still sets the native previous-context mark")
+vim.api.nvim_buf_set_lines(0, 0, -1, false, { "" })
+feed("i`<Esc>")
+check(vim.api.nvim_get_current_line() == "`", "insert mode types a literal backtick")
+vim.api.nvim_buf_set_lines(0, 0, -1, false, { "abcde" })
+vim.api.nvim_buf_set_mark(0, "a", 1, 3, {})
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+feed("v`a<Esc>")
+check(vim.api.nvim_win_get_cursor(0)[2] == 3, "visual-mode backtick jumps to the native mark")
+check(action_count("nvimMarks.list") == list_count, "native backtick operations do not open the picker")
+
+-- 10. Opting out after setup restores native normal-mode mark jumps.
+marks.setup({ map_backtick = false, debounce_ms = 5 })
+check(vim.fn.maparg("`", "n") == "", "map_backtick=false removes the plugin's previous mapping")
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+feed("`a")
+check(vim.api.nvim_win_get_cursor(0)[2] == 3, "native `a works after opting out")
+
+-- 11. Opting out does not delete a user's replacement mapping.
+marks.setup({ debounce_ms = 5 })
+local user_calls = 0
+local function user_mapping() user_calls = user_calls + 1 end
+vim.keymap.set("n", "`", user_mapping)
+marks.setup({ map_backtick = false, debounce_ms = 5 })
+feed("`")
+check(user_calls == 1, "opting out preserves a user's global replacement mapping")
+vim.keymap.del("n", "`")
+
+-- A buffer-local mapping can hide our global mapping, which must still be
+-- removed while the buffer-local user mapping is retained.
+marks.setup({ debounce_ms = 5 })
+vim.keymap.set("n", "`", user_mapping, { buffer = native_buf })
+marks.setup({ map_backtick = false, debounce_ms = 5 })
+feed("`")
+check(user_calls == 2, "opting out preserves a user's buffer-local mapping")
+vim.api.nvim_set_current_buf(document_buf)
+check(vim.fn.maparg("`", "n") == "", "opting out also removes a plugin mapping hidden by a buffer-local mapping")
+vim.api.nvim_buf_delete(native_buf, { force = true })
+
+-- 12. Outside VS Code, setup is a no-op and does not require the vscode module.
 package.loaded["nvim-marks"] = nil
 package.loaded["vscode"] = nil
 package.preload["vscode"] = nil
 vim.g.vscode = nil
 local ok = pcall(function() require("nvim-marks").setup({}) end)
 check(ok, "setup() outside VS Code does not error")
+check(vim.fn.maparg("`", "n") == "", "setup() outside VS Code does not install a backtick mapping")
 
 vim.fn.delete(tmp, "rf")
 io.stdout:write(string.format("\n%d failure(s)\n", failures))

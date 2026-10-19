@@ -189,60 +189,81 @@ class MarkRenderer implements vscode.Disposable {
 }
 
 interface MarkPickItem extends vscode.QuickPickItem {
-  mark: Mark;
+  /** Separators have no target. */
+  mark?: Mark;
 }
 
 async function listMarks(renderer: MarkRenderer): Promise<void> {
   const active = vscode.window.activeTextEditor;
-  const activeKey = active ? active.document.uri.fsPath : undefined;
   const normalize = makeNormalizer(process.platform);
+  const activeKey = active?.document.uri.scheme === "file" ? normalize(active.document.uri.fsPath) : undefined;
   const marks = renderer.allMarks;
-  if (marks.length === 0) {
-    void vscode.window.showInformationMessage("Neovim Marks: no marks known yet. Set one with `m{a-zA-Z}` in Neovim.");
-    return;
-  }
-
   const items: MarkPickItem[] = [];
-  const inActive = marks.filter((m) => activeKey !== undefined && m.file === normalize(activeKey));
-  const elsewhere = marks.filter((m) => !inActive.includes(m));
+  const inActive = marks.filter((m) => m.file === activeKey);
+  const elsewhere = marks.filter((m) => m.file !== activeKey).sort((a, b) =>
+    a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line || a.col - b.col || a.name.localeCompare(b.name),
+  );
 
   const lineText = (m: Mark): string => {
-    const doc = vscode.workspace.textDocuments.find((d) => normalize(d.uri.fsPath) === m.file);
+    const doc = vscode.workspace.textDocuments.find((d) => d.uri.scheme === "file" && normalize(d.uri.fsPath) === m.file);
     if (!doc || m.line >= doc.lineCount) return "";
     return doc.lineAt(m.line).text.trim();
   };
   const rel = (file: string): string => {
     const uri = vscode.Uri.file(file);
-    return vscode.workspace.asRelativePath(uri, false);
+    return vscode.workspace.asRelativePath(uri);
   };
-  const toItem = (m: Mark, showFile: boolean): MarkPickItem => ({
-    label: `$(bookmark) ${m.name}`,
-    description: `${showFile ? rel(m.file) + ":" : "line "}${m.line + 1}`,
+  const toItem = (m: Mark): MarkPickItem => ({
+    label: `$(bookmark) ${m.name}  ${path.basename(m.file)}`,
+    description: `${rel(m.file)}:${m.line + 1}:${m.col + 1}`,
     detail: lineText(m) || undefined,
     mark: m,
   });
 
   if (inActive.length > 0) {
-    items.push({ label: "current file", kind: vscode.QuickPickItemKind.Separator, mark: inActive[0] });
-    items.push(...inActive.map((m) => toItem(m, false)));
+    items.push({ label: "current file", kind: vscode.QuickPickItemKind.Separator });
+    items.push(...inActive.map(toItem));
   }
   if (elsewhere.length > 0) {
-    items.push({ label: "other files", kind: vscode.QuickPickItemKind.Separator, mark: elsewhere[0] });
-    items.push(...elsewhere.map((m) => toItem(m, true)));
+    items.push({ label: "other files", kind: vscode.QuickPickItemKind.Separator });
+    items.push(...elsewhere.map(toItem));
   }
 
   const picked = await vscode.window.showQuickPick(items, {
-    placeHolder: "Jump to a Neovim mark",
+    title: "Neovim Marks",
+    placeHolder: marks.length > 0
+      ? "Search marks, files or locations; Enter to jump"
+      : "No marks yet. Set one with m{a-zA-Z} in Neovim.",
     matchOnDescription: true,
     matchOnDetail: true,
   });
-  if (!picked || picked.kind === vscode.QuickPickItemKind.Separator) return;
+  if (!picked?.mark) return;
   const m = picked.mark;
-  const pos = new vscode.Position(m.line, m.col);
-  await vscode.window.showTextDocument(vscode.Uri.file(m.file), {
-    selection: new vscode.Range(pos, pos),
-    preserveFocus: false,
-  });
+  try {
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(m.file));
+    const pos = markPosition(doc, m);
+    const selection = new vscode.Range(pos, pos);
+    const editor = await vscode.window.showTextDocument(doc, { selection, preserveFocus: false });
+    editor.revealRange(selection, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    void vscode.window.showErrorMessage(`Neovim Marks: could not open mark ${m.name} in ${rel(m.file)}. ${message}`);
+  }
+}
+
+/** Neovim reports UTF-8 byte columns; VS Code selections use UTF-16 offsets. */
+function markPosition(doc: vscode.TextDocument, mark: Mark): vscode.Position {
+  const line = Math.min(Math.floor(mark.line), doc.lineCount - 1);
+  const text = doc.lineAt(line).text;
+  let bytes = 0;
+  let character = 0;
+  for (const codePoint of text) {
+    const width = Buffer.byteLength(codePoint, "utf8");
+    if (bytes + width > mark.col) break;
+    bytes += width;
+    character += codePoint.length;
+  }
+  return new vscode.Position(line, character);
 }
 
 /** What the extension knows about both halves; printed by `nvimMarks.status`. */
@@ -340,7 +361,12 @@ export function activate(context: vscode.ExtensionContext): NvimMarksApi {
     renderer,
     vscode.commands.registerCommand("nvimMarks.update", onUpdate),
     vscode.commands.registerCommand("nvimMarks.status", showStatus),
-    vscode.commands.registerCommand("nvimMarks.list", () => listMarks(renderer)),
+    vscode.commands.registerCommand("nvimMarks.list", (payload?: unknown) => {
+      // The Neovim mapping sends its fresh snapshot with this command so the
+      // picker cannot overtake a debounced or asynchronous update.
+      if (payload !== undefined) onUpdate(payload);
+      return listMarks(renderer);
+    }),
     vscode.commands.registerCommand("nvimMarks.toggle", () => {
       const on = renderer.toggle();
       void vscode.window.setStatusBarMessage(`Neovim Marks: ${on ? "shown" : "hidden"}`, 2000);
