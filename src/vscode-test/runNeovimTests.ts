@@ -86,7 +86,8 @@ async function main(): Promise<void> {
   if (!executable || !fs.existsSync(executable)) {
     throw new Error("No cached VS Code found. Set VSCODE_EXECUTABLE_PATH to a local VS Code executable; this test never downloads one.");
   }
-  const nvim = spawnSync("nvim", ["--version"], { encoding: "utf8", windowsHide: true, timeout: 5000 });
+  const nvimExecutable = process.env.NVIM_MARKS_NEOVIM_EXECUTABLE ?? "nvim";
+  const nvim = spawnSync(nvimExecutable, ["--version"], { encoding: "utf8", windowsHide: true, timeout: 5000 });
   if (nvim.error || nvim.status !== 0) throw new Error("Native nvim must be available on PATH.");
   console.log(`Real bridge: ${path.basename(neovimExtension)}; ${nvim.stdout.split(/\r?\n/)[0]}`);
   console.log(`VS Code: ${executable}`);
@@ -104,9 +105,11 @@ async function main(): Promise<void> {
     fs.writeFileSync(path.join(workspace, "marks.txt"), "first line\nsecond line\nthird line\nfresh target line\nlast line\n");
     fs.writeFileSync(path.join(userData, "User", "settings.json"), JSON.stringify({
       "vscode-neovim.useWSL": false,
-      [`vscode-neovim.neovimExecutablePaths.${process.platform}`]: "nvim",
+      [`vscode-neovim.neovimExecutablePaths.${process.platform}`]: nvimExecutable,
       [`vscode-neovim.neovimInitVimPaths.${process.platform}`]: path.join(root, "test", "vscode-neovim", "init.lua"),
-      "vscode-neovim.logPath": path.join(temporary, "neovim.log"),
+      // Keep the default output-channel logger: upstream 1.20.1 reuses a
+      // closed logPath file descriptor when its restart command runs.
+      "nvimMarks.debounceMs": 60000,
       "extensions.experimental.affinity": { "asvetliakov.vscode-neovim": 0, "xbghc.nvim-marks": 0 },
       "extensions.autoUpdate": false,
       "extensions.autoCheckUpdates": false,
@@ -139,9 +142,9 @@ async function main(): Promise<void> {
       `--extensionTestsPath=${path.join(__dirname, "neovimSuite.js")}`,
     ], env);
     const report = JSON.parse(fs.readFileSync(path.join(temporary, "result.json"), "utf8"));
-    if (report.passed !== 2 || report.failed !== 0) throw new Error(`Incomplete E2E test result: ${JSON.stringify(report)}`);
+    if (report.passed !== 5 || report.failed !== 0) throw new Error(`Incomplete E2E test result: ${JSON.stringify(report)}`);
     for (const result of report.results) console.log(`ok   ${result}`);
-    console.log("2/2 real Neovim E2E tests passed");
+    console.log("5/5 real Neovim E2E tests passed");
     passed = true;
   } finally {
     if (passed) {

@@ -5,7 +5,7 @@ out/**
 out-test/**
 out-vscode-test/**
 test/**
-lua/**
+work/**
 node_modules/**
 .gitignore
 .github/**

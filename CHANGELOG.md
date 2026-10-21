@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.6 (pre-release)
+
+- Bundle and automatically load the Lua module through vscode-neovim, including after Neovim restarts. No separate plugin installation or Neovim configuration is needed.
+- Add VS Code settings for the mark and backtick mappings, debounce delay and additional sync events.
+- Clean up session resources and restore previous mappings on deactivation. Uninstalling removes the bundled Lua with the extension without touching user configuration.
+- Declare vscode-neovim as an extension dependency and explain migration from separately installed Lua plugins.
+
 ## 0.1.5 (pre-release)
 
 - Warn when the Neovim plugin predates 0.1.4 and cannot provide the backtick mark picker; explain how to update it and reload VS Code.

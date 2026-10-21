@@ -235,7 +235,51 @@ vim.api.nvim_set_current_buf(document_buf)
 check(vim.fn.maparg("`", "n") == "", "opting out also removes a plugin mapping hidden by a buffer-local mapping")
 vim.api.nvim_buf_delete(native_buf, { force = true })
 
--- 12. Outside VS Code, setup is a no-op and does not require the vscode module.
+-- 12. Teardown restores pre-existing mappings and cancels all pending work.
+marks.teardown()
+vim.keymap.set("n", "m", "m", { desc = "Original m", silent = true })
+vim.keymap.set("n", "`", user_mapping, { desc = "Original backtick" })
+local original_m = vim.fn.maparg("m", "n", false, true)
+marks.setup({ debounce_ms = 5 })
+marks.schedule_sync()
+vim.api.nvim_exec_autocmds("CmdlineLeave", {})
+n = #actions
+local original_mark = vim.fn.getpos("'c")
+marks.teardown()
+marks.teardown()
+vim.wait(50)
+check(#actions == n, "teardown cancels initial sync, timers and queued CmdlineLeave work")
+check(not marks.sync(true) and not marks.list(), "a stopped module cannot send actions")
+check(vim.fn.exists("#NvimMarksSync") == 0, "teardown removes the autocmd group")
+check(vim.fn.exists(":NvimMarksRefresh") == 0, "teardown removes its refresh command")
+local restored_m = vim.fn.maparg("m", "n", false, true)
+check(restored_m.rhs == original_m.rhs and restored_m.silent == original_m.silent and restored_m.desc == original_m.desc,
+  "teardown restores the user's original string mapping and options")
+feed("`")
+check(user_calls == 3, "teardown restores the user's original Lua callback mapping")
+check(vim.deep_equal(vim.fn.getpos("'c"), original_mark), "teardown leaves native marks intact")
+vim.keymap.del("n", "m")
+vim.keymap.del("n", "`")
+
+-- 13. Reconfiguration has one initial sync and preserves user replacements.
+n = #actions
+marks.setup({ debounce_ms = 5 })
+marks.setup({ debounce_ms = 5 })
+vim.wait(50)
+check(#actions == n + 1, "repeated setup sends one initial snapshot, with no stale callbacks")
+vim.keymap.set("n", "m", user_mapping, { desc = "Replacement m" })
+vim.keymap.set("n", "`", user_mapping, { desc = "Replacement backtick" })
+vim.api.nvim_create_user_command("NvimMarksRefresh", function() user_calls = user_calls + 1 end, {})
+marks.teardown()
+check(vim.fn.maparg("m", "n", false, true).desc == "Replacement m", "teardown keeps a user's later m mapping")
+check(vim.fn.maparg("`", "n", false, true).desc == "Replacement backtick", "teardown keeps a user's later backtick mapping")
+vim.cmd("NvimMarksRefresh")
+check(user_calls == 4, "teardown keeps a user's replacement command")
+vim.api.nvim_del_user_command("NvimMarksRefresh")
+vim.keymap.del("n", "m")
+vim.keymap.del("n", "`")
+
+-- 14. Outside VS Code, setup is a no-op and does not require the vscode module.
 package.loaded["nvim-marks"] = nil
 package.loaded["vscode"] = nil
 package.preload["vscode"] = nil

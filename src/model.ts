@@ -125,7 +125,7 @@ export function payloadInfo(raw: unknown): PayloadInfo | undefined {
 /** Decide whether the two halves fit together; undefined means they do. */
 export function checkCompat(info: PayloadInfo): CompatIssue | undefined {
   const { protocol, pluginVersion } = info;
-  const updatePlugin = "Update the Neovim plugin (e.g. `:Lazy update vscode-nvim-marks`) and reload the VS Code window.";
+  const updatePlugin = "Update the Neovim Marks extension, remove any separate nvim-marks installation from your Neovim configuration, and reload VS Code.";
   if (protocol !== undefined && protocol > PROTOCOL_VERSION) {
     return {
       outdated: "extension",

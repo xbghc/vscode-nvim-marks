@@ -16,6 +16,7 @@ import {
   type PayloadInfo,
 } from "./model";
 import { markIconUri, type IconColors } from "./icons";
+import { NeovimBridge } from "./neovim";
 
 type Style = "gutter" | "eol" | "both";
 
@@ -269,6 +270,7 @@ function markPosition(doc: vscode.TextDocument, mark: Mark): vscode.Position {
 /** What the extension knows about both halves; printed by `nvimMarks.status`. */
 export interface NvimMarksStatus {
   extensionVersion: string;
+  bridge: string;
   /** Payloads received since activation. */
   updates: number;
   /** From the last payload; undefined before the first one or when the plugin did not report it. */
@@ -292,6 +294,8 @@ export interface NvimMarksApi {
   appliedFor(doc: vscode.TextDocument): Map<string, vscode.Range[]>;
 }
 
+let bridge: NeovimBridge | undefined;
+
 export function activate(context: vscode.ExtensionContext): NvimMarksApi {
   const output = vscode.window.createOutputChannel("Neovim Marks");
   const renderer = new MarkRenderer(output);
@@ -307,6 +311,7 @@ export function activate(context: vscode.ExtensionContext): NvimMarksApi {
     const marks = renderer.allMarks;
     const s: NvimMarksStatus = {
       extensionVersion,
+      bridge: bridge?.state ?? "starting",
       updates,
       localMarks: marks.filter((m) => m.kind === "local").length,
       globalMarks: marks.filter((m) => m.kind === "global").length,
@@ -321,11 +326,12 @@ export function activate(context: vscode.ExtensionContext): NvimMarksApi {
     const s = status();
     const plugin =
       s.updates === 0
-        ? "nothing received yet; is the nvim-marks plugin installed and Neovim running inside vscode-neovim?"
+        ? "nothing received yet; check the Lua bridge status below"
         : `${s.pluginVersion ?? "version not reported"} (protocol ${s.pluginProtocol ?? "?"}), ${s.updates} payload(s) received`;
     output.appendLine("status:");
     output.appendLine(`  extension      ${s.extensionVersion} (protocol ${PROTOCOL_VERSION})`);
     output.appendLine(`  neovim plugin  ${plugin}`);
+    output.appendLine(`  Lua bridge     ${s.bridge}`);
     output.appendLine(`  marks          ${s.localMarks} local (a-z), ${s.globalMarks} global (A-Z)`);
     output.appendLine(`  decorations    ${renderer.settingsSummary}`);
     output.appendLine(`  compatibility  ${s.issue ? s.issue.message : "ok"}`);
@@ -380,6 +386,10 @@ export function activate(context: vscode.ExtensionContext): NvimMarksApi {
     }),
   );
 
+  bridge = new NeovimBridge(context, output);
+  context.subscriptions.push(bridge);
+  void bridge.start();
+
   return {
     status,
     marks: () => renderer.allMarks,
@@ -388,6 +398,7 @@ export function activate(context: vscode.ExtensionContext): NvimMarksApi {
   };
 }
 
-export function deactivate(): void {
-  // Disposables are handled through context.subscriptions.
+export async function deactivate(): Promise<void> {
+  await bridge?.stop();
+  bridge = undefined;
 }

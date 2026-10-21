@@ -116,8 +116,8 @@ test("status reports both versions and flags a mismatched half", async () => {
   await vscode.commands.executeCommand("nvimMarks.update", { version: 1, plugin_version: "0.1.3", locals: [], globals: [] });
   s = a.status();
   assert.equal(s.issue?.outdated, "plugin");
-  assert.match(s.issue!.message, /:Lazy update vscode-nvim-marks/);
-  assert.match(s.issue!.message, /reload the VS Code window/);
+  assert.match(s.issue!.message, /remove any separate nvim-marks installation/);
+  assert.match(s.issue!.message, /reload VS Code/);
   await vscode.commands.executeCommand("nvimMarks.update", { version: 1, plugin_version: "0.1.4", locals: [], globals: [] });
   assert.equal(a.status().issue, undefined, "the first plugin with the backtick mapping is compatible");
 

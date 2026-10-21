@@ -2,7 +2,7 @@
   "name": "nvim-marks",
   "displayName": "Neovim Marks",
   "description": "Show Neovim marks in the VS Code gutter when using vscode-neovim. Marks stay native to Neovim; this extension only renders them.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publisher": "xbghc",
   "license": "MIT",
   "repository": {
@@ -29,6 +29,9 @@
   "extensionKind": [
     "workspace",
     "ui"
+  ],
+  "extensionDependencies": [
+    "asvetliakov.vscode-neovim"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -68,6 +71,28 @@
     "configuration": {
       "title": "Neovim Marks",
       "properties": {
+        "nvimMarks.mapM": {
+          "type": "boolean",
+          "default": true,
+          "description": "Wrap the normal-mode m key to sync newly set marks immediately."
+        },
+        "nvimMarks.mapBacktick": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the mark picker with backtick in normal mode. Disable to keep native backtick mark jumps."
+        },
+        "nvimMarks.debounceMs": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 60,
+          "description": "Delay in milliseconds for combining Neovim mark updates."
+        },
+        "nvimMarks.extraEvents": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Additional Neovim autocmd events that trigger a mark update."
+        },
         "nvimMarks.enabled": {
           "type": "boolean",
           "default": true,

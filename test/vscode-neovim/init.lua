@@ -5,8 +5,7 @@ vim.opt.shada = ""
 vim.opt.loadplugins = false
 vim.opt.packpath = ""
 vim.opt.updatetime = 60000
-vim.opt.runtimepath:prepend(assert(vim.env.NVIM_MARKS_REPOSITORY))
-
--- Keep automatic updates outside the test window so a moved mark must reach
--- VS Code in the picker RPC itself. The normal-mode mappings remain defaults.
-require("nvim-marks").setup({ debounce_ms = 60000 })
+-- No nvim-marks runtime path, plugin installation or setup call: the VS Code
+-- extension must supply everything. User mappings must survive its teardown.
+vim.keymap.set("n", "m", "m", { desc = "Original user m" })
+vim.keymap.set("n", "`", "`", { desc = "Original user backtick" })

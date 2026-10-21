@@ -5,3 +5,4 @@ out-test/
 out-vscode-test/
 *.vsix
 .vscode-test/
+work/

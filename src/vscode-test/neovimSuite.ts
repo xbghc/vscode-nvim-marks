@@ -48,9 +48,17 @@ export async function run(): Promise<void> {
     assert.ok(neovimExtension, "the real installed vscode-neovim is available");
     const marks = await bounded(marksExtension.activate(), "activate Neovim Marks", 20000);
     await bounded(neovimExtension.activate(), "activate vscode-neovim", 20000);
-    const client = await bounded(vscode.commands.executeCommand<NeovimClient>("_getNeovimClient"), "get live Neovim client");
+    await waitFor(async () => (await vscode.commands.getCommands()).includes("_getNeovimClient"), "Neovim RPC command registration");
+    let client = await bounded(vscode.commands.executeCommand<NeovimClient>("_getNeovimClient"), "get live Neovim client");
     assert.equal(typeof client?.executeLua, "function", "vscode-neovim exposes its live RPC client");
     const lua = <T = unknown>(code: string, args: unknown[] = []) => bounded(client.executeLua<T>(code, args), "Neovim RPC");
+    await waitFor(() => marks.status().bridge === "bundled Lua loaded" && marks.status().updates > 0, "automatic bundled Lua startup");
+    assert.deepEqual(await lua("return vim.api.nvim_get_runtime_file('lua/nvim-marks/init.lua', true)"), [],
+      "no separately installed Lua plugin or runtime path is needed");
+    assert.equal(await lua("return vim.fn.isdirectory(vim.fn.stdpath('config'))"), 0, "no Neovim config directory was created");
+    results.push("bundled Lua starts without a plugin installation or Neovim configuration changes");
+    passed++;
+    console.log(`ok   ${results[results.length - 1]}`);
     const send = (keys: string) => bounded(vscode.commands.executeCommand("vscode-neovim.send", keys), "send Neovim keys");
     const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
     await vscode.window.showTextDocument(document);
@@ -122,6 +130,40 @@ export async function run(): Promise<void> {
     results.push("cancelling the real backtick picker preserves text and cursor, and normal input resumes");
     passed++;
     console.log(`ok   ${results[results.length - 1]}`);
+
+    before = marks.status().updates;
+    await bounded(vscode.commands.executeCommand("vscode-neovim.restart"), "restart the real Neovim bridge", 20000);
+    await waitFor(async () => (await vscode.commands.getCommands()).includes("_getNeovimClient"), "restarted Neovim RPC command registration", 20000);
+    client = await bounded(vscode.commands.executeCommand<NeovimClient>("_getNeovimClient"), "get restarted Neovim client");
+    await waitFor(() => marks.status().updates > before, "automatically reload Lua after Neovim restarts", 15000);
+    assert.equal(await lua("return vim.fn.maparg('`', 'n', false, true).desc"), "List Neovim marks");
+    assert.equal(marks.status().pluginVersion, marks.status().extensionVersion);
+    results.push("restarting vscode-neovim automatically restores the bundled module and mappings");
+    passed++;
+    console.log(`ok   ${results[results.length - 1]}`);
+
+    const settings = vscode.workspace.getConfiguration("nvimMarks");
+    await settings.update("mapM", false, vscode.ConfigurationTarget.Global);
+    await settings.update("mapBacktick", false, vscode.ConfigurationTarget.Global);
+    await waitFor(async () => await lua("return vim.fn.maparg('`', 'n', false, true).desc") === "Original user backtick", "apply shortcut settings");
+    assert.equal(await lua("return vim.fn.maparg('m', 'n', false, true).desc"), "Original user m");
+    await settings.update("mapM", true, vscode.ConfigurationTarget.Global);
+    await settings.update("mapBacktick", true, vscode.ConfigurationTarget.Global);
+    await waitFor(async () => await lua("return vim.fn.maparg('`', 'n', false, true).desc") === "List Neovim marks", "re-enable shortcuts");
+    assert.equal(await lua("return #vim.api.nvim_get_autocmds({group='NvimMarksSync'})"), 7, "reconfiguration does not duplicate autocmds");
+    const lifecycle = require(path.join(marksExtension.extensionPath, "dist/extension.js")) as { deactivate(): Promise<void> };
+    await bounded(lifecycle.deactivate(), "deactivate Neovim Marks");
+    assert.equal(await lua("return package.loaded['nvim-marks'] == nil"), true);
+    assert.equal(await lua("return vim.fn.exists('#NvimMarksSync')"), 0);
+    assert.equal(await lua("return vim.fn.exists(':NvimMarksRefresh')"), 0);
+    assert.equal(await lua("return vim.fn.maparg('m', 'n', false, true).desc"), "Original user m");
+    assert.equal(await lua("return vim.fn.maparg('`', 'n', false, true).desc"), "Original user backtick");
+    assert.equal(await lua("return vim.fn.isdirectory(vim.fn.stdpath('config'))"), 0);
+    await sleep(5500);
+    assert.equal(await lua("return package.loaded['nvim-marks'] == nil"), true, "deactivation stops automatic reinstallation");
+    results.push("VS Code settings reconfigure mappings; deactivation cleans the session and restores user mappings");
+    passed++;
+    console.log(`ok   ${results[results.length - 1]}`);
   } catch (error) {
     failed++;
     console.error(`FAIL ${error instanceof Error ? error.stack : error}`);
@@ -129,6 +171,6 @@ export async function run(): Promise<void> {
   } finally {
     await bounded(vscode.commands.executeCommand("workbench.action.closeQuickOpen"), "close remaining picker", 2000).catch(() => {});
     fs.writeFileSync(path.join(testRoot, "result.json"), JSON.stringify({ passed, failed, results }, null, 2));
-    console.log(`\n${passed}/2 real Neovim E2E tests passed`);
+    console.log(`\n${passed}/5 real Neovim E2E tests passed`);
   }
 }

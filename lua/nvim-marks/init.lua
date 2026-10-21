@@ -4,15 +4,14 @@
 --- module sends snapshots to VS Code for gutter decorations and a mark picker.
 --- Normal-mode ` opens the picker; set map_backtick=false for native ` jumps.
 ---
---- Usage (lazy.nvim):
----   { "xbghc/vscode-nvim-marks", cond = vim.g.vscode ~= nil, opts = {} }
+--- Bundled with the VS Code extension and loaded into its Neovim session.
 
 local M = {}
 
 --- Release of this plugin, sent with every payload so the VS Code extension
 --- can tell when the two halves drift apart. test/lua/spec.lua keeps it equal
 --- to the version in package.json.
-M.version = "0.1.5"
+M.version = "0.1.6"
 
 local defaults = {
   --- Wrap `m` in normal mode so a newly set mark shows up immediately
@@ -33,6 +32,22 @@ M.config = vim.deepcopy(defaults)
 local last_sent = nil
 local timer = nil
 local vscode_mod = nil
+local active = false
+local generation = 0
+local group = nil
+local command_definition = nil
+local mappings = {}
+
+local function global_mapping(lhs)
+  for _, mapping in ipairs(vim.api.nvim_get_keymap("n")) do
+    if mapping.lhs == lhs then return mapping end
+  end
+end
+
+local function map(lhs, callback, desc)
+  mappings[lhs] = { previous = global_mapping(lhs), callback = callback }
+  vim.keymap.set("n", lhs, callback, { desc = desc })
+end
 
 local function vscode()
   if vscode_mod then
@@ -106,6 +121,7 @@ end
 --- @param force boolean|nil  send even if unchanged
 --- @return boolean sent
 function M.sync(force)
+  if not active then return false end
   local payload = M.collect()
   local encoded = vim.json.encode(payload)
   if not force and encoded == last_sent then
@@ -125,6 +141,7 @@ end
 --- the picker before receiving the latest marks.
 --- @return boolean sent
 function M.list()
+  if not active then return false end
   local vs = vscode()
   if not vs then
     return false
@@ -135,18 +152,21 @@ end
 
 --- Debounced sync; several triggers in quick succession yield one RPC.
 function M.schedule_sync()
+  if not active then return end
   if timer then
     timer:stop()
     timer:close()
     timer = nil
   end
-  timer = (vim.uv or vim.loop).new_timer()
-  timer:start(M.config.debounce_ms, 0, function()
-    timer:stop()
-    timer:close()
-    timer = nil
+  local epoch = generation
+  local pending = (vim.uv or vim.loop).new_timer()
+  timer = pending
+  pending:start(M.config.debounce_ms, 0, function()
+    pending:stop()
+    pending:close()
+    if timer == pending then timer = nil end
     vim.schedule(function()
-      M.sync(false)
+      if active and generation == epoch then M.sync(false) end
     end)
   end)
 end
@@ -170,7 +190,38 @@ local function list_marks_interactive()
   M.list()
 end
 
+--- Remove only our session resources. Never write to the user's config.
+function M.teardown()
+  active = false
+  generation = generation + 1
+  if timer then
+    timer:stop()
+    timer:close()
+    timer = nil
+  end
+  if group then
+    pcall(vim.api.nvim_del_augroup_by_id, group)
+    group = nil
+  end
+  for lhs, saved in pairs(mappings) do
+    local current = global_mapping(lhs)
+    if current and current.callback == saved.callback then
+      vim.keymap.del("n", lhs)
+      if saved.previous then vim.fn.mapset("n", false, saved.previous) end
+    end
+  end
+  mappings = {}
+  local command = vim.api.nvim_get_commands({}).NvimMarksRefresh
+  if command_definition and command and command.definition == command_definition then
+    vim.api.nvim_del_user_command("NvimMarksRefresh")
+  end
+  command_definition = nil
+  last_sent = nil
+  vscode_mod = nil
+end
+
 function M.setup(opts)
+  M.teardown()
   M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
 
   if not vim.g.vscode then
@@ -179,7 +230,9 @@ function M.setup(opts)
     return
   end
 
-  local group = vim.api.nvim_create_augroup("NvimMarksSync", { clear = true })
+  active = true
+  local epoch = generation
+  group = vim.api.nvim_create_augroup("NvimMarksSync", { clear = true })
   local events = {
     "BufEnter",
     "BufWinEnter",
@@ -200,36 +253,30 @@ function M.setup(opts)
   vim.api.nvim_create_autocmd("CmdlineLeave", {
     group = group,
     callback = function()
-      vim.schedule(M.schedule_sync)
+      vim.schedule(function()
+        if active and generation == epoch then M.schedule_sync() end
+      end)
     end,
   })
 
   if M.config.map_m then
-    vim.keymap.set("n", "m", set_mark_interactive, { desc = "Set mark (synced to VS Code)" })
+    map("m", set_mark_interactive, "Set mark (synced to VS Code)")
   end
 
   if M.config.map_backtick then
     -- Keep operator-pending and character arguments such as d`a, f` and r`
     -- native by installing this in Neovim's normal-mode mapping table only.
-    vim.keymap.set("n", "`", list_marks_interactive, { desc = "List Neovim marks" })
-  else
-    -- Inspect global mappings directly: a buffer-local user mapping may hide
-    -- ours from maparg(). Never remove a mapping the user has replaced.
-    for _, mapping in ipairs(vim.api.nvim_get_keymap("n")) do
-      if mapping.lhs == "`" and mapping.callback == list_marks_interactive then
-        vim.keymap.del("n", "`")
-        break
-      end
-    end
+    map("`", list_marks_interactive, "List Neovim marks")
   end
 
   vim.api.nvim_create_user_command("NvimMarksRefresh", function()
     M.refresh()
   end, { desc = "Resend all marks to VS Code" })
+  command_definition = vim.api.nvim_get_commands({}).NvimMarksRefresh.definition
 
   -- Initial push once the UI is up.
   vim.schedule(function()
-    M.sync(true)
+    if active and generation == epoch then M.sync(true) end
   end)
 end
 
