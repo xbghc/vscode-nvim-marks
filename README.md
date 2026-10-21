@@ -51,14 +51,15 @@ User mappings changed afterward are preserved. Native marks remain in Neovim.
 ## Usage
 
 Set marks as usual. They appear in the gutter within a few milliseconds:
-lowercase marks as a plain letter, uppercase (global) marks as a letter inside
-a rounded frame. When several marks sit on one line the icon shows the first
+both lowercase (local) and uppercase (global) marks appear as plain bold
+letters without a border. When several marks sit on one line the icon shows the first
 two letters, or one letter and `+`.
 
 Press **backtick (`` ` ``)** in normal mode to open the mark picker, using the
-same native VS Code UI as Quick Open (`Cmd+P` / `Ctrl+P`). Every mark shows its
-letter, file name, path and `line:column`; marks in the current file come first,
-followed by marks in other files. Source text is included for open documents.
+same native VS Code UI as Quick Open (`Cmd+P` / `Ctrl+P`). Each item occupies one
+line: the mark letter, one space, then the source text, with the file path and
+`line:column` alongside. For documents that are not open, the file name replaces
+the source text. Marks in the current file come first, followed by other files.
 Type to filter by mark, file, path, position or source text, use the arrow keys
 to select a result, then press **Enter** to jump. **Esc** closes the picker
 without moving the cursor. With no marks, the picker explains how to set one.

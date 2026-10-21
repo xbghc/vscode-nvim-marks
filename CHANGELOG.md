@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.7 (pre-release)
+
+- Remove the rounded border from global mark gutter icons; all marks now use plain letters.
+- Show each mark picker item on one line, with a single space between the mark letter and source text, followed by its file location.
+
 ## 0.1.6 (pre-release)
 
 - Bundle and automatically load the Lua module through vscode-neovim, including after Neovim restarts. No separate plugin installation or Neovim configuration is needed.

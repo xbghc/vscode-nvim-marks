@@ -11,7 +11,7 @@ local M = {}
 --- Release of this plugin, sent with every payload so the VS Code extension
 --- can tell when the two halves drift apart. test/lua/spec.lua keeps it equal
 --- to the version in package.json.
-M.version = "0.1.6"
+M.version = "0.1.7"
 
 local defaults = {
   --- Wrap `m` in normal mode so a newly set mark shows up immediately

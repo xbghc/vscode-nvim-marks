@@ -103,17 +103,18 @@ test("decorationKey is stable and parsable", () => {
   assert.equal(decorationKey("global", "A+"), "global:A+");
 });
 
-test("icon svg escapes text, frames globals, and encodes as data uri", () => {
-  const local = markIconSvg("a", "local", "#123456");
+test("icon svg renders borderless letters, escapes text, and encodes as data uri", () => {
+  const local = markIconSvg("a", "#123456");
   assert.match(local, /<text [^>]*>a<\/text>/);
   assert.doesNotMatch(local, /<rect/);
-  const global = markIconSvg("A", "global", "#abcdef");
-  assert.match(global, /<rect/);
-  assert.match(markIconSvg("<", "local", "#000"), /&lt;/);
-  const uri = markIconUri("ab", "local", "#000");
+  const global = markIconSvg("A", "#abcdef");
+  assert.match(global, /<text [^>]*>A<\/text>/);
+  assert.doesNotMatch(global, /<rect/);
+  assert.match(markIconSvg("<", "#000"), /&lt;/);
+  const uri = markIconUri("ab", "#000");
   assert.match(uri, /^data:image\/svg\+xml;base64,/);
   const decoded = Buffer.from(uri.split(",")[1], "base64").toString("utf8");
-  assert.equal(decoded, markIconSvg("ab", "local", "#000"));
+  assert.equal(decoded, markIconSvg("ab", "#000"));
 });
 
 test("compareVersions orders major.minor.patch numerically and ignores suffixes", () => {

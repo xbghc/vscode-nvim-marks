@@ -153,7 +153,7 @@ class MarkRenderer implements vscode.Disposable {
     const perTheme = (color: string): vscode.ThemableDecorationRenderOptions => {
       const o: vscode.ThemableDecorationRenderOptions = {};
       if (s.style === "gutter" || s.style === "both") {
-        o.gutterIconPath = vscode.Uri.parse(markIconUri(label, kind, color));
+        o.gutterIconPath = vscode.Uri.parse(markIconUri(label, color));
         o.gutterIconSize = "contain";
       }
       if (s.style === "eol" || s.style === "both") {
@@ -215,9 +215,8 @@ async function listMarks(renderer: MarkRenderer): Promise<void> {
     return vscode.workspace.asRelativePath(uri);
   };
   const toItem = (m: Mark): MarkPickItem => ({
-    label: `$(bookmark) ${m.name}  ${path.basename(m.file)}`,
+    label: `${m.name} ${lineText(m) || path.basename(m.file)}`.replace(/\$\(/g, "\\$("),
     description: `${rel(m.file)}:${m.line + 1}:${m.col + 1}`,
-    detail: lineText(m) || undefined,
     mark: m,
   });
 
@@ -236,7 +235,6 @@ async function listMarks(renderer: MarkRenderer): Promise<void> {
       ? "Search marks, files or locations; Enter to jump"
       : "No marks yet. Set one with m{a-zA-Z} in Neovim.",
     matchOnDescription: true,
-    matchOnDetail: true,
   });
   if (!picked?.mark) return;
   const m = picked.mark;
