@@ -152,8 +152,8 @@ for _, m in ipairs(p.globals) do
 end
 check(ok_special, "only a-z and A-Z marks are sent")
 
--- 8. ` opens the picker with marks collected at the moment it is pressed.
-check(marks.config.map_backtick == true, "the backtick picker mapping is enabled by default")
+-- 8. ` previews fresh marks, then Neovim jumps directly on the mark key.
+check(marks.config.map_backtick == true, "the backtick preview mapping is enabled by default")
 check(vim.fn.maparg("`", "n") ~= "", "backtick is mapped in normal mode")
 for _, mode in ipairs({ "i", "x", "o" }) do
   check(vim.fn.maparg("`", mode) == "", "backtick is not mapped in mode " .. mode)
@@ -163,24 +163,42 @@ vim.api.nvim_buf_set_mark(0, "d", 1, 0, {})
 marks.sync(true)
 vim.api.nvim_buf_set_mark(0, "d", 3, 1, {})
 n = #actions
-feed("`")
-check(#actions == n + 1 and actions[#actions].name == "nvimMarks.list", "backtick sends one list RPC without a separate sync")
-p = last_payload()
+local list_count = action_count("nvimMarks.list")
+local original_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+feed("`d")
+check(vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 3, 1 }), "`d jumps to the live mark's exact line and column without Enter")
+check(#actions == n + 2 and actions[n + 1].name == "nvimMarks.preview"
+  and actions[n + 2].name == "nvimMarks.hidePreview", "backtick opens a preview and closes it after the target key")
+p = actions[n + 1].args[1]
 local listed_entry = nil
 for _, e in ipairs(p.locals) do
   if e.file == vim.fn.fnamemodify(file_b, ":p") then listed_entry = e end
 end
 local md = listed_entry and find(listed_entry.marks, "d")
-check(md and md.line == 3 and md.col == 2, "the list RPC includes a mark moved since the last sync")
-check(p.plugin_version == marks.version and find(p.globals, "B") ~= nil, "the list RPC carries the complete versioned snapshot")
+check(md and md.line == 3 and md.col == 2, "the preview includes a mark moved since the last sync")
+check(p.plugin_version == marks.version and find(p.globals, "B") ~= nil, "the preview carries the complete versioned snapshot")
+feed("``")
+check(vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 1, 0 }), "double backtick returns to the previous context")
+feed("`<Esc>")
+check(vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 1, 0 }), "Escape cancels a pending jump without moving the cursor")
+check(actions[#actions].name == "nvimMarks.hidePreview", "Escape closes the preview")
+feed("j")
+check(vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 2, 0 }), "normal input resumes after cancelling a jump")
+check(vim.deep_equal(vim.api.nvim_buf_get_lines(0, 0, -1, false), original_lines), "mark jumps and cancellation leave document text unchanged")
+feed("`B")
+check(vim.api.nvim_buf_get_name(0) == file_a and vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 5, 0 }),
+  "uppercase marks jump directly across files")
+check(action_count("nvimMarks.list") == list_count, "direct jumps and cancellation never open the search picker")
+vim.cmd("edit " .. file_b)
 n = #actions
-check(marks.list() and #actions == n + 1 and actions[#actions].name == "nvimMarks.list", "list() also opens the picker when marks have not changed")
+check(marks.list() and #actions == n + 1 and actions[#actions].name == "nvimMarks.list", "explicit list() still opens the searchable picker")
 
 -- 9. Neovim still owns operator motions and arguments to native commands.
 local document_buf = vim.api.nvim_get_current_buf()
 local native_buf = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_set_current_buf(native_buf)
-local list_count = action_count("nvimMarks.list")
+list_count = action_count("nvimMarks.list")
 vim.api.nvim_buf_set_lines(0, 0, -1, false, { "one two three" })
 vim.api.nvim_buf_set_mark(0, "a", 1, 4, {})
 vim.api.nvim_win_set_cursor(0, { 1, 0 })
@@ -207,7 +225,7 @@ feed("v`a<Esc>")
 check(vim.api.nvim_win_get_cursor(0)[2] == 3, "visual-mode backtick jumps to the native mark")
 check(action_count("nvimMarks.list") == list_count, "native backtick operations do not open the picker")
 
--- 10. Opting out after setup restores native normal-mode mark jumps.
+-- 10. Opting out after setup removes the preview wrapper and keeps native jumps.
 marks.setup({ map_backtick = false, debounce_ms = 5 })
 check(vim.fn.maparg("`", "n") == "", "map_backtick=false removes the plugin's previous mapping")
 vim.api.nvim_win_set_cursor(0, { 1, 0 })

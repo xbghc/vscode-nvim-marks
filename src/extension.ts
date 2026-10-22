@@ -194,11 +194,12 @@ interface MarkPickItem extends vscode.QuickPickItem {
   mark?: Mark;
 }
 
-async function listMarks(renderer: MarkRenderer): Promise<void> {
+function markPickItems(renderer: MarkRenderer, preview = false): MarkPickItem[] {
   const active = vscode.window.activeTextEditor;
   const normalize = makeNormalizer(process.platform);
   const activeKey = active?.document.uri.scheme === "file" ? normalize(active.document.uri.fsPath) : undefined;
-  const marks = renderer.allMarks;
+  // Local marks in other buffers cannot be reached by a native two-key jump.
+  const marks = renderer.allMarks.filter((m) => !preview || m.kind === "global" || m.file === activeKey);
   const items: MarkPickItem[] = [];
   const inActive = marks.filter((m) => m.file === activeKey);
   const elsewhere = marks.filter((m) => m.file !== activeKey).sort((a, b) =>
@@ -229,9 +230,14 @@ async function listMarks(renderer: MarkRenderer): Promise<void> {
     items.push(...elsewhere.map(toItem));
   }
 
+  return items;
+}
+
+async function listMarks(renderer: MarkRenderer): Promise<void> {
+  const items = markPickItems(renderer);
   const picked = await vscode.window.showQuickPick(items, {
     title: "Neovim Marks",
-    placeHolder: marks.length > 0
+    placeHolder: items.length > 0
       ? "Search marks, files or locations; Enter to jump"
       : "No marks yet. Set one with m{a-zA-Z} in Neovim.",
     matchOnDescription: true,
@@ -246,7 +252,51 @@ async function listMarks(renderer: MarkRenderer): Promise<void> {
     editor.revealRange(selection, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    void vscode.window.showErrorMessage(`Neovim Marks: could not open mark ${m.name} in ${rel(m.file)}. ${message}`);
+    void vscode.window.showErrorMessage(`Neovim Marks: could not open mark ${m.name} in ${vscode.workspace.asRelativePath(vscode.Uri.file(m.file))}. ${message}`);
+  }
+}
+
+/** A mark reference that stays visible while Neovim receives the target key. */
+class MarkPreview implements vscode.Disposable {
+  private picker?: vscode.QuickPick<MarkPickItem>;
+  private subscriptions: vscode.Disposable[] = [];
+
+  async show(renderer: MarkRenderer): Promise<void> {
+    this.dispose();
+    if (!vscode.window.activeTextEditor) return;
+    const picker = vscode.window.createQuickPick<MarkPickItem>();
+    this.picker = picker;
+    picker.items = markPickItems(renderer, true);
+    picker.title = "Neovim Marks — press a mark key to jump";
+    picker.placeholder = picker.items.length > 0
+      ? "Press a mark key to jump; Esc to cancel"
+      : "No marks yet. Esc to cancel, then set one with m{a-zA-Z}.";
+    picker.ignoreFocusOut = true;
+    const send = (key: string): void => {
+      this.dispose();
+      void vscode.commands.executeCommand("vscode-neovim.send", key === "<" ? "<LT>" : key);
+    };
+    this.subscriptions.push(
+      // Cover input during the brief show/focus handoff, or a click in the box:
+      // a target key always goes to Neovim instead of filtering the preview.
+      picker.onDidChangeValue((value) => { if (value) send(Array.from(value)[0]); }),
+      picker.onDidAccept(() => {
+        const mark = picker.selectedItems[0]?.mark;
+        if (mark) send(mark.name);
+      }),
+      picker.onDidHide(() => send("<Esc>")),
+    );
+    picker.show();
+    // QuickPick opens with input focus. Keep it visible on blur, then return
+    // input to the editor where the Neovim mapping is awaiting the mark key.
+    await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
+  }
+
+  dispose(): void {
+    for (const subscription of this.subscriptions) subscription.dispose();
+    this.subscriptions = [];
+    this.picker?.dispose();
+    this.picker = undefined;
   }
 }
 
@@ -297,6 +347,7 @@ let bridge: NeovimBridge | undefined;
 export function activate(context: vscode.ExtensionContext): NvimMarksApi {
   const output = vscode.window.createOutputChannel("Neovim Marks");
   const renderer = new MarkRenderer(output);
+  const preview = new MarkPreview();
   const extensionVersion = String(context.extension.packageJSON.version);
   output.appendLine(`activated ${extensionVersion} (${process.platform}, cwd ${path.basename(process.cwd())})`);
 
@@ -363,6 +414,7 @@ export function activate(context: vscode.ExtensionContext): NvimMarksApi {
   context.subscriptions.push(
     output,
     renderer,
+    preview,
     vscode.commands.registerCommand("nvimMarks.update", onUpdate),
     vscode.commands.registerCommand("nvimMarks.status", showStatus),
     vscode.commands.registerCommand("nvimMarks.list", (payload?: unknown) => {
@@ -371,6 +423,11 @@ export function activate(context: vscode.ExtensionContext): NvimMarksApi {
       if (payload !== undefined) onUpdate(payload);
       return listMarks(renderer);
     }),
+    vscode.commands.registerCommand("nvimMarks.preview", (payload: unknown) => {
+      onUpdate(payload);
+      return preview.show(renderer);
+    }),
+    vscode.commands.registerCommand("nvimMarks.hidePreview", () => preview.dispose()),
     vscode.commands.registerCommand("nvimMarks.toggle", () => {
       const on = renderer.toggle();
       void vscode.window.setStatusBarMessage(`Neovim Marks: ${on ? "shown" : "hidden"}`, 2000);
