@@ -135,6 +135,7 @@ async function main(): Promise<void> {
     delete env.NEOVIM_DEBUG;
     await launch(executable, [
       workspace, "--new-window", "--no-sandbox", "--disable-gpu", "--disable-updates",
+      "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1",
       "--disable-extension=github.copilot", "--disable-extension=github.copilot-chat", "--log=error",
       "--skip-welcome", "--skip-release-notes", "--disable-workspace-trust", "--no-cached-data",
       `--user-data-dir=${userData}`, `--extensions-dir=${extensions}`,

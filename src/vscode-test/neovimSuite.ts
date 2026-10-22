@@ -5,6 +5,7 @@ import * as path from "node:path";
 import assert from "node:assert/strict";
 import type { NvimMarksApi } from "../extension";
 import { makeNormalizer } from "../model";
+import { connectUI } from "./ui";
 
 // _getNeovimClient is registered by vscode-neovim itself. This is its real RPC
 // client, used only to arrange native marks and inspect state; nothing is mocked.
@@ -41,12 +42,21 @@ export async function run(): Promise<void> {
   const testRoot = process.env.NVIM_MARKS_NEOVIM_TEST_ROOT!;
   const file = path.join(process.env.NVIM_MARKS_TEST_WORKSPACE!, "marks.txt");
   const results: string[] = [];
+  let ui: Awaited<ReturnType<typeof connectUI>> | undefined;
   try {
     const marksExtension = vscode.extensions.getExtension<NvimMarksApi>("xbghc.nvim-marks");
     const neovimExtension = vscode.extensions.getExtension("asvetliakov.vscode-neovim");
     assert.ok(marksExtension, "Neovim Marks is loaded as a development extension");
     assert.ok(neovimExtension, "the real installed vscode-neovim is available");
     const marks = await bounded(marksExtension.activate(), "activate Neovim Marks", 20000);
+    ui = await bounded(connectUI(testRoot), "connect to test renderer");
+    const keyboard = ui;
+    const previewVisible = () => keyboard.evaluate<boolean>(
+      `!!document.querySelector('.quick-input-widget')?.checkVisibility()`,
+    );
+    const editorFocused = () => keyboard.evaluate<boolean>(
+      `!!document.activeElement?.closest('.monaco-editor')`,
+    );
     await bounded(neovimExtension.activate(), "activate vscode-neovim", 20000);
     await waitFor(async () => (await vscode.commands.getCommands()).includes("_getNeovimClient"), "Neovim RPC command registration");
     let client = await bounded(vscode.commands.executeCommand<NeovimClient>("_getNeovimClient"), "get live Neovim client");
@@ -66,7 +76,7 @@ export async function run(): Promise<void> {
     await waitFor(async () => normalize(await lua<string>("return vim.api.nvim_buf_get_name(0)")) === normalize(file), "Neovim document attachment");
     await waitFor(async () => await lua<string>("return vim.fn.mode()") === "n", "normal mode");
     assert.equal(await lua<string>("return vim.bo.buftype"), "acwrite", "exercise a genuine vscode-neovim document buffer");
-    assert.equal(await lua<string>("return vim.fn.maparg('`', 'n', false, true).desc"), "List Neovim marks");
+    assert.equal(await lua<string>("return vim.fn.maparg('`', 'n', false, true).desc"), "Jump to Neovim mark");
     const nvimArguments = await lua<string[]>("return vim.v.argv");
     const initIndex = nvimArguments.indexOf("-u");
     assert.ok(initIndex >= 0, "Neovim uses an explicit isolated init");
@@ -94,19 +104,29 @@ export async function run(): Promise<void> {
     await lua("vim.api.nvim_buf_set_mark(0, 'a', 4, 6, {})");
     assert.deepEqual(snapshot(), [["a", 0, 0]], "VS Code still has the old mark before pressing backtick");
     let before = marks.status().updates;
-    await send("`");
+    await keyboard.press("`");
     await waitFor(() => marks.status().updates > before, "bare backtick delivers a fresh picker snapshot through the real bridge");
     assert.equal(marks.status().updates, before + 1, "the picker carries one snapshot without a separate update RPC");
     assert.deepEqual(snapshot(), [["a", 3, 6]], "the picker snapshot contains the newly moved native mark");
-    await sleep(250);
-    await bounded(vscode.commands.executeCommand("workbench.action.acceptSelectedQuickOpenItem"), "accept mark picker");
-    await waitFor(() => cursorAt(3, 6), "accept jumps to the fresh mark");
+    await waitFor(previewVisible, "backtick expands the preview");
+    await waitFor(editorFocused, "editor keeps keyboard focus with the preview open");
+    await keyboard.press("a");
+    await waitFor(() => cursorAt(3, 6), "the mark key jumps immediately without Enter");
+    await waitFor(async () => !(await previewVisible()), "the preview closes after the mark key");
     await waitFor(async () => {
       const position = await lua<number[]>("return vim.api.nvim_win_get_cursor(0)");
       return position[0] === 4 && position[1] === 6;
-    }, "accepted selection synchronizes back into Neovim");
+    }, "the native cursor and VS Code selection agree after the jump");
     assertUnchanged();
-    results.push("bare backtick uses the real bridge, refreshes the snapshot and jumps on accept");
+    await send("gg0");
+    await waitFor(() => cursorAt(0, 0), "cursor before a rapid two-key jump");
+    await send("`a");
+    await waitFor(() => cursorAt(3, 6), "rapid two-key input jumps without waiting for the preview");
+    await sleep(250);
+    assert.equal(await previewVisible(), false, "rapid input does not leave a delayed preview open");
+    assert.equal(await editorFocused(), true, "rapid input leaves focus in the editor");
+    assertUnchanged();
+    results.push("backtick previews fresh marks with editor focus; the mark key jumps without Enter and closes the preview");
     passed++;
     console.log(`ok   ${results[results.length - 1]}`);
 
@@ -115,17 +135,27 @@ export async function run(): Promise<void> {
     await lua("vim.api.nvim_buf_set_mark(0, 'a', 2, 2, {})");
     assert.deepEqual(snapshot(), [["a", 3, 6]], "cancel test also starts with a stale received snapshot");
     before = marks.status().updates;
-    await send("`");
+    await keyboard.press("`");
     await waitFor(() => marks.status().updates > before, "second bare backtick reaches the picker");
     assert.equal(marks.status().updates, before + 1);
     assert.deepEqual(snapshot(), [["a", 1, 2]], "cancel picker receives fresh marks too");
-    await sleep(250);
-    await bounded(vscode.commands.executeCommand("workbench.action.closeQuickOpen"), "cancel mark picker");
+    await waitFor(previewVisible, "preview opens before cancellation");
+    await waitFor(editorFocused, "editor has focus before Escape");
+    await keyboard.press("Escape");
+    await waitFor(async () => !(await previewVisible()), "Escape closes the preview");
     await sleep(250);
     assert.ok(cursorAt(0, 0), "cancel keeps the original document and cursor");
     assertUnchanged();
-    await send("j");
+    await keyboard.press("j");
     await waitFor(() => cursorAt(1, 0), "normal-mode input still works after cancellation");
+    await lua("vim.cmd('delmarks a-zA-Z')");
+    await keyboard.press("`");
+    await waitFor(previewVisible, "an empty mark list still opens a preview");
+    await waitFor(editorFocused, "empty preview keeps editor focus");
+    assert.deepEqual(snapshot(), [], "the empty preview replaces stale marks");
+    await keyboard.press("Escape");
+    await waitFor(async () => !(await previewVisible()), "Escape closes an empty preview");
+    assert.ok(cursorAt(1, 0), "an empty preview does not move the cursor");
     assertUnchanged();
     results.push("cancelling the real backtick picker preserves text and cursor, and normal input resumes");
     passed++;
@@ -136,7 +166,7 @@ export async function run(): Promise<void> {
     await waitFor(async () => (await vscode.commands.getCommands()).includes("_getNeovimClient"), "restarted Neovim RPC command registration", 20000);
     client = await bounded(vscode.commands.executeCommand<NeovimClient>("_getNeovimClient"), "get restarted Neovim client");
     await waitFor(() => marks.status().updates > before, "automatically reload Lua after Neovim restarts", 15000);
-    assert.equal(await lua("return vim.fn.maparg('`', 'n', false, true).desc"), "List Neovim marks");
+    assert.equal(await lua("return vim.fn.maparg('`', 'n', false, true).desc"), "Jump to Neovim mark");
     assert.equal(marks.status().pluginVersion, marks.status().extensionVersion);
     results.push("restarting vscode-neovim automatically restores the bundled module and mappings");
     passed++;
@@ -149,7 +179,7 @@ export async function run(): Promise<void> {
     assert.equal(await lua("return vim.fn.maparg('m', 'n', false, true).desc"), "Original user m");
     await settings.update("mapM", true, vscode.ConfigurationTarget.Global);
     await settings.update("mapBacktick", true, vscode.ConfigurationTarget.Global);
-    await waitFor(async () => await lua("return vim.fn.maparg('`', 'n', false, true).desc") === "List Neovim marks", "re-enable shortcuts");
+    await waitFor(async () => await lua("return vim.fn.maparg('`', 'n', false, true).desc") === "Jump to Neovim mark", "re-enable shortcuts");
     assert.equal(await lua("return #vim.api.nvim_get_autocmds({group='NvimMarksSync'})"), 7, "reconfiguration does not duplicate autocmds");
     const lifecycle = require(path.join(marksExtension.extensionPath, "dist/extension.js")) as { deactivate(): Promise<void> };
     await bounded(lifecycle.deactivate(), "deactivate Neovim Marks");
@@ -166,9 +196,13 @@ export async function run(): Promise<void> {
     console.log(`ok   ${results[results.length - 1]}`);
   } catch (error) {
     failed++;
+    if (ui) console.error("VS Code notifications:", await ui.evaluate(
+      `Array.from(document.querySelectorAll('.notification-list-item')).map(item => item.textContent)`,
+    ).catch(() => []));
     console.error(`FAIL ${error instanceof Error ? error.stack : error}`);
     throw error;
   } finally {
+    ui?.close();
     await bounded(vscode.commands.executeCommand("workbench.action.closeQuickOpen"), "close remaining picker", 2000).catch(() => {});
     fs.writeFileSync(path.join(testRoot, "result.json"), JSON.stringify({ passed, failed, results }, null, 2));
     console.log(`\n${passed}/5 real Neovim E2E tests passed`);

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.8 (pre-release)
+
+- Preview marks on backtick while keeping keyboard focus in the editor. Press the mark key to jump directly without typing into search or pressing Enter; the preview closes on a target key or Escape. The searchable picker remains available through **Neovim Marks: List marks**.
+
 ## 0.1.7 (pre-release)
 
 - Remove the rounded border from global mark gutter icons; all marks now use plain letters.

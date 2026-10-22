@@ -6,8 +6,8 @@ Shows your Neovim marks in the VS Code gutter when you use
 vscode-neovim forces `signcolumn=no`, so plugins that draw marks in the sign
 column render nothing inside VS Code. This project fills that gap without
 moving marks out of Neovim: `ma`, `'a`, `d'a`, `:'a,'bs/…/…/`, `:marks` and
-`:delmarks` keep their native behaviour. Press the backtick key (`` ` ``) in
-normal mode to open a VS Code Quick Pick of your marks and jump to a location.
+`:delmarks` keep their native behaviour. In normal mode, press backtick (`` ` ``)
+to preview your marks, then a mark key to jump directly, for example `` `a ``.
 
 The extension bundles both halves and loads Lua automatically:
 
@@ -55,25 +55,33 @@ both lowercase (local) and uppercase (global) marks appear as plain bold
 letters without a border. When several marks sit on one line the icon shows the first
 two letters, or one letter and `+`.
 
-Press **backtick (`` ` ``)** in normal mode to open the mark picker, using the
-same native VS Code UI as Quick Open (`Cmd+P` / `Ctrl+P`). Each item occupies one
-line: the mark letter, one space, then the source text, with the file path and
+Press **backtick (`` ` ``)** in normal mode to preview the mark list, then the mark
+letter to jump directly to its exact line and column. For example, `` `a `` jumps to local mark
+`a` and `` `A `` jumps to global mark `A`, including in another file. Focus stays
+in the editor: the next key selects a mark instead of searching, and no **Enter**
+is needed. The preview closes after the key; **Esc** closes it without jumping.
+It shows local marks in the current file and global marks across files. Native
+special marks and the jumplist still work.
+
+For a searchable list, run **Neovim Marks: List marks** from the Command Palette.
+It uses the same native VS Code UI as Quick Open (`Cmd+P` / `Ctrl+P`). Each item
+occupies one line: the mark letter, one space, then the source text, with the file path and
 `line:column` alongside. For documents that are not open, the file name replaces
 the source text. Marks in the current file come first, followed by other files.
 Type to filter by mark, file, path, position or source text, use the arrow keys
 to select a result, then press **Enter** to jump. **Esc** closes the picker
 without moving the cursor. With no marks, the picker explains how to set one.
 
-The shortcut collects the latest marks when pressed, so it also picks up a
-just-created or moved mark before the usual debounced update.
+The backtick shortcut refreshes decorations when pressed and jumps using Neovim's
+live marks, so a just-created or moved mark works before the usual debounced update.
 
 Locations use Neovim's 1-based line and byte column. When jumping, columns are
 converted to VS Code's character offsets, including on lines with non-ASCII
 text. In a multi-root workspace, paths include the workspace folder name.
 
-The default normal-mode backtick mapping replaces native backtick-prefixed
-jumps such as `` `a ``. Set `nvimMarks.mapBacktick` to `false` in VS Code to keep those
-bindings and use the **Neovim Marks: List marks** command instead. Insert mode,
+The default normal-mode backtick mapping previews marks while preserving native
+backtick-prefixed jumps. Set `nvimMarks.mapBacktick` to `false` in VS Code to leave
+your own backtick mapping untouched and skip the preview. Insert mode,
 visual mode and operator-pending motions such as `` d`a `` stay native.
 
 Commands (Command Palette):
@@ -101,7 +109,7 @@ Neovim side:
 | Setting                      | Default                                  | Meaning                                                   |
 | ---------------------------- | ---------------------------------------- | --------------------------------------------------------- |
 | `nvimMarks.mapM`             | `true`                                   | Sync immediately after setting a mark with `m`.          |
-| `nvimMarks.mapBacktick`      | `true`                                   | Open the picker with normal-mode backtick.               |
+| `nvimMarks.mapBacktick`      | `true`                                   | Preview marks, then jump directly on the mark key.       |
 | `nvimMarks.debounceMs`       | `60`                                     | Combine bursts of updates within this many milliseconds. |
 | `nvimMarks.extraEvents`      | `[]`                                     | Additional Neovim autocmd events that trigger a sync.    |
 | `nvimMarks.enabled`          | `true`                                   | Render marks at all.                                      |
@@ -174,8 +182,8 @@ npm run package      # build the .vsix
 
 The bridge test uses an installed `asvetliakov.vscode-neovim` extension, an
 isolated VS Code profile and a minimal Neovim config with no nvim-marks setup.
-It covers automatic loading, picker input, restart recovery, settings and
-deactivation cleanup. The renderer-only `test:vscode` suite uses a test fixture
+It covers automatic loading, preview focus, direct mark jumps, cancellation,
+restart recovery, settings and deactivation cleanup. The renderer-only `test:vscode` suite uses a test fixture
 for the dependency and injects snapshots directly.
 Set `NVIM_MARKS_NEOVIM_EXTENSION` to the installed extension directory when it
 is not under `~/.vscode/extensions`. Set `VSCODE_EXECUTABLE_PATH` to a local
@@ -189,12 +197,13 @@ VS Code's environment does not find the same `nvim` as your shell.
    for the 0.1.x releases), or install the VSIX from GitHub Releases.
 2. Remove any old separate nvim-marks installation and setup call from your
    Neovim configuration, following the migration instructions above.
-3. Run **Developer: Reload Window** in VS Code. In **Normal mode**, press the
-   backtick key. Even with no marks, an empty mark picker should open.
+3. Run **Developer: Reload Window** in VS Code. In **Normal mode**, set a mark
+   with `ma`, move elsewhere, then press backtick followed by `a`.
+   A preview should open on backtick, then close as `a` jumps directly to the mark.
 4. Use **Neovim Marks: Show status** to check the Lua bridge. Confirm
    vscode-neovim is running; use **Neovim: Restart Extension** if needed.
-   Check `:verbose nmap <Char-96>` for another mapping and ensure
-   `nvimMarks.mapBacktick` is `true`.
+   Check `:verbose nmap <Char-96>` for another mapping. `nvimMarks.mapBacktick`
+   controls the preview; native jumps also work with it disabled.
 
 ## License
 

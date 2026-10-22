@@ -2,7 +2,7 @@
 ---
 --- Marks stay native to Neovim (`ma`, `'a`, `d'a`, `:marks`, `:delmarks`). This
 --- module sends snapshots to VS Code for gutter decorations and a mark picker.
---- Normal-mode ` opens the picker; set map_backtick=false for native ` jumps.
+--- Normal-mode ` previews marks while the next key performs a native jump.
 ---
 --- Bundled with the VS Code extension and loaded into its Neovim session.
 
@@ -11,13 +11,13 @@ local M = {}
 --- Release of this plugin, sent with every payload so the VS Code extension
 --- can tell when the two halves drift apart. test/lua/spec.lua keeps it equal
 --- to the version in package.json.
-M.version = "0.1.7"
+M.version = "0.1.8"
 
 local defaults = {
   --- Wrap `m` in normal mode so a newly set mark shows up immediately
   --- instead of after the next CursorHold.
   map_m = true,
-  --- Open the VS Code mark picker with ` in normal mode.
+  --- Preview marks while waiting for the target of a native ` jump.
   map_backtick = true,
   --- Debounce window for the push, in milliseconds.
   debounce_ms = 60,
@@ -44,9 +44,9 @@ local function global_mapping(lhs)
   end
 end
 
-local function map(lhs, callback, desc)
+local function map(lhs, callback, desc, opts)
   mappings[lhs] = { previous = global_mapping(lhs), callback = callback }
-  vim.keymap.set("n", lhs, callback, { desc = desc })
+  vim.keymap.set("n", lhs, callback, vim.tbl_extend("force", { desc = desc }, opts or {}))
 end
 
 local function vscode()
@@ -186,8 +186,14 @@ local function set_mark_interactive()
   M.schedule_sync()
 end
 
-local function list_marks_interactive()
-  M.list()
+local function jump_mark_interactive()
+  local vs = vscode()
+  if vs then vs.action("nvimMarks.preview", { args = { M.collect() } }) end
+  local ok, ch = pcall(vim.fn.getcharstr)
+  if vs then vs.action("nvimMarks.hidePreview") end
+  if not ok or ch == "" or ch == "\27" then return "" end
+  -- Return an unmapped native jump, preserving special marks and the jumplist.
+  return "`" .. ch
 end
 
 --- Remove only our session resources. Never write to the user's config.
@@ -266,7 +272,7 @@ function M.setup(opts)
   if M.config.map_backtick then
     -- Keep operator-pending and character arguments such as d`a, f` and r`
     -- native by installing this in Neovim's normal-mode mapping table only.
-    map("`", list_marks_interactive, "List Neovim marks")
+    map("`", jump_mark_interactive, "Jump to Neovim mark", { expr = true })
   end
 
   vim.api.nvim_create_user_command("NvimMarksRefresh", function()
