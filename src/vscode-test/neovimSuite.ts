@@ -161,6 +161,51 @@ export async function run(): Promise<void> {
     passed++;
     console.log(`ok   ${results[results.length - 1]}`);
 
+    // Preview replacement may retire the document buffer. VS Code can also
+    // retain closed models in a cache; the Lua suite forces the wipe/rebuild
+    // path, while this test exercises actual tabs, bridge updates and drawing.
+    const settings = vscode.workspace.getConfiguration("nvimMarks");
+    await settings.update("debounceMs", 5, vscode.ConfigurationTarget.Global);
+    await waitFor(async () => await lua("return require('nvim-marks').config.debounce_ms") === 5, "apply lifecycle test debounce");
+    await send("3G0llma");
+    await waitFor(() => snapshot().some(([name, line, col]) => name === "a" && line === 2 && col === 2), "receive local mark before switching");
+    const hasTab = (target: string): boolean => vscode.window.tabGroups.all.some((group) => group.tabs.some((tab) =>
+      tab.input instanceof vscode.TabInputText && normalize(tab.input.uri.fsPath) === normalize(target)));
+    // Ensure the next open is a fresh preview even if the initial tab was pinned.
+    await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+    await waitFor(() => !hasTab(file), "VS Code closes the original tab");
+    let reopened = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+    await vscode.window.showTextDocument(reopened, { preview: true });
+    await waitFor(async () => normalize(await lua<string>("return vim.api.nvim_buf_get_name(0)")) === normalize(file), "reattach original document");
+    assert.deepEqual(await lua("return vim.api.nvim_buf_get_mark(0, 'a')"), [3, 2], "reopened file restores its native local mark");
+    await waitFor(() => marks.appliedFor(reopened).has("local:a"), "redraw recovered mark");
+
+    const otherFile = path.join(path.dirname(file), "other.txt");
+    await vscode.window.showTextDocument(vscode.Uri.file(otherFile), { preview: true });
+    await waitFor(() => !hasTab(file), "the other preview replaces the original tab");
+    await waitFor(async () => normalize(await lua<string>("return vim.api.nvim_buf_get_name(0)")) === normalize(otherFile), "attach other preview");
+    assert.deepEqual(await lua("return vim.api.nvim_buf_get_mark(0, 'a')"), [0, 0], "another file does not inherit the local mark");
+    reopened = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+    await vscode.window.showTextDocument(reopened, { preview: true });
+    await waitFor(async () => normalize(await lua<string>("return vim.api.nvim_buf_get_name(0)")) === normalize(file), "switch back to original preview");
+    assert.deepEqual(await lua("return vim.api.nvim_buf_get_mark(0, 'a')"), [3, 2], "switching back restores the native mark again");
+    await waitFor(() => marks.appliedFor(reopened).get("local:a")?.[0].start.line === 2, "restored mark is drawn at the original line");
+    await lua("vim.cmd('normal! gg0'); vim.cmd('normal! `a')");
+    await waitFor(() => cursorAt(2, 2), "native jump reaches recovered mark");
+    await lua("vim.cmd('delmarks a')");
+    await vscode.window.showTextDocument(vscode.Uri.file(otherFile), { preview: true });
+    await waitFor(() => !hasTab(file), "replace preview after explicitly deleting the mark");
+    reopened = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+    await vscode.window.showTextDocument(reopened, { preview: false });
+    await waitFor(async () => normalize(await lua<string>("return vim.api.nvim_buf_get_name(0)")) === normalize(file), "reopen after deletion");
+    assert.equal(await lua("return vim.api.nvim_buf_get_mark(0, 'a')[1]"), 0, "a deleted mark stays deleted after preview replacement");
+    await waitFor(() => !marks.appliedFor(reopened).has("local:a"), "deleted mark decoration stays absent");
+    assert.equal(reopened.getText(), originalText);
+    assert.equal(reopened.isDirty, false);
+    results.push("preview replacement and reopening preserve native marks and decorations without resurrecting deletions");
+    passed++;
+    console.log(`ok   ${results[results.length - 1]}`);
+
     before = marks.status().updates;
     await bounded(vscode.commands.executeCommand("vscode-neovim.restart"), "restart the real Neovim bridge", 20000);
     await waitFor(async () => (await vscode.commands.getCommands()).includes("_getNeovimClient"), "restarted Neovim RPC command registration", 20000);
@@ -172,7 +217,6 @@ export async function run(): Promise<void> {
     passed++;
     console.log(`ok   ${results[results.length - 1]}`);
 
-    const settings = vscode.workspace.getConfiguration("nvimMarks");
     await settings.update("mapM", false, vscode.ConfigurationTarget.Global);
     await settings.update("mapBacktick", false, vscode.ConfigurationTarget.Global);
     await waitFor(async () => await lua("return vim.fn.maparg('`', 'n', false, true).desc") === "Original user backtick", "apply shortcut settings");
@@ -180,7 +224,7 @@ export async function run(): Promise<void> {
     await settings.update("mapM", true, vscode.ConfigurationTarget.Global);
     await settings.update("mapBacktick", true, vscode.ConfigurationTarget.Global);
     await waitFor(async () => await lua("return vim.fn.maparg('`', 'n', false, true).desc") === "Jump to Neovim mark", "re-enable shortcuts");
-    assert.equal(await lua("return #vim.api.nvim_get_autocmds({group='NvimMarksSync'})"), 7, "reconfiguration does not duplicate autocmds");
+    assert.equal(await lua("return #vim.api.nvim_get_autocmds({group='NvimMarksSync'})"), 10, "reconfiguration does not duplicate autocmds");
     const lifecycle = require(path.join(marksExtension.extensionPath, "dist/extension.js")) as { deactivate(): Promise<void> };
     await bounded(lifecycle.deactivate(), "deactivate Neovim Marks");
     assert.equal(await lua("return package.loaded['nvim-marks'] == nil"), true);
@@ -205,6 +249,6 @@ export async function run(): Promise<void> {
     ui?.close();
     await bounded(vscode.commands.executeCommand("workbench.action.closeQuickOpen"), "close remaining picker", 2000).catch(() => {});
     fs.writeFileSync(path.join(testRoot, "result.json"), JSON.stringify({ passed, failed, results }, null, 2));
-    console.log(`\n${passed}/5 real Neovim E2E tests passed`);
+    console.log(`\n${passed}/6 real Neovim E2E tests passed`);
   }
 }

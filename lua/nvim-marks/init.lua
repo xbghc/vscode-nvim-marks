@@ -11,7 +11,7 @@ local M = {}
 --- Release of this plugin, sent with every payload so the VS Code extension
 --- can tell when the two halves drift apart. test/lua/spec.lua keeps it equal
 --- to the version in package.json.
-M.version = "0.1.8"
+M.version = "0.1.9"
 
 local defaults = {
   --- Wrap `m` in normal mode so a newly set mark shows up immediately
@@ -37,6 +37,9 @@ local generation = 0
 local group = nil
 local command_definition = nil
 local mappings = {}
+-- VS Code may close a preview document and recreate its Neovim buffer later.
+-- Keep only marks from wiped document buffers, until that file is reopened.
+local retired_marks = {}
 
 local function global_mapping(lhs)
   for _, mapping in ipairs(vim.api.nvim_get_keymap("n")) do
@@ -70,26 +73,50 @@ local function abs(file)
   return vim.fn.fnamemodify(file, ":p")
 end
 
+local function document_file(buf)
+  if not vim.api.nvim_buf_is_valid(buf) then return nil end
+  local buftype = vim.bo[buf].buftype
+  if buftype ~= "" and buftype ~= "acwrite" then return nil end
+  return abs(vim.api.nvim_buf_get_name(buf))
+end
+
+local function local_marks(buf)
+  local marks = {}
+  for _, m in ipairs(vim.fn.getmarklist(buf)) do
+    local name = m.mark:sub(2)
+    if name:match("^[a-z]$") then
+      marks[#marks + 1] = { name = name, line = m.pos[2], col = m.pos[3] }
+    end
+  end
+  return marks
+end
+
+local function restore_marks(buf)
+  local file = document_file(buf)
+  local saved = file and retired_marks[file]
+  if not saved or not vim.api.nvim_buf_is_loaded(buf) then return end
+  -- Consume once: revisiting this buffer must never undo a later :delmarks.
+  retired_marks[file] = nil
+  local line_count = vim.api.nvim_buf_line_count(buf)
+  for _, mark in ipairs(saved) do
+    if mark.line > 0 and mark.line <= line_count and vim.api.nvim_buf_get_mark(buf, mark.name)[1] == 0 then
+      vim.api.nvim_buf_set_mark(buf, mark.name, mark.line, mark.col - 1, {})
+    end
+  end
+end
+
 --- Build the snapshot of all marks worth drawing.
 --- @return table payload  { version = 1, plugin_version = "x.y.z", locals = {...}, globals = {...} }
 function M.collect()
   local locals = {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     -- vscode-neovim sets buftype=acwrite on every document buffer.
-    local buftype = vim.bo[buf].buftype
-    if vim.api.nvim_buf_is_loaded(buf) and (buftype == "" or buftype == "acwrite") then
-      local file = abs(vim.api.nvim_buf_get_name(buf))
-      if file then
-        local marks = {}
-        for _, m in ipairs(vim.fn.getmarklist(buf)) do
-          local name = m.mark:sub(2)
-          if name:match("^[a-z]$") then
-            marks[#marks + 1] = { name = name, line = m.pos[2], col = m.pos[3] }
-          end
-        end
-        if #marks > 0 then
-          locals[#locals + 1] = { file = file, marks = marks }
-        end
+    -- Unloaded buffers still own native marks; do not drop them on a switch.
+    local file = document_file(buf)
+    if file then
+      local marks = local_marks(buf)
+      if #marks > 0 then
+        locals[#locals + 1] = { file = file, marks = marks }
       end
     end
   end
@@ -224,9 +251,11 @@ function M.teardown()
   command_definition = nil
   last_sent = nil
   vscode_mod = nil
+  retired_marks = {}
 end
 
 function M.setup(opts)
+  local saved_marks = retired_marks
   M.teardown()
   M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
 
@@ -237,9 +266,14 @@ function M.setup(opts)
   end
 
   active = true
+  retired_marks = saved_marks
   local epoch = generation
   group = vim.api.nvim_create_augroup("NvimMarksSync", { clear = true })
   local events = {
+    -- vscode-neovim lists a document buffer after setting its name and text,
+    -- but suppresses BufEnter/BufWinEnter while creating its window.
+    "BufAdd",
+    "BufReadPost",
     "BufEnter",
     "BufWinEnter",
     "BufWritePost",
@@ -250,7 +284,22 @@ function M.setup(opts)
   vim.list_extend(events, M.config.extra_events)
   vim.api.nvim_create_autocmd(events, {
     group = group,
-    callback = function()
+    callback = function(event)
+      restore_marks(event.buf)
+      M.schedule_sync()
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    group = group,
+    callback = function(event)
+      local file = document_file(event.buf)
+      if file then
+        -- Read live marks before destruction, even if the last m/:delmarks
+        -- happened too recently for the debounced snapshot to reach VS Code.
+        local marks = local_marks(event.buf)
+        retired_marks[file] = #marks > 0 and marks or nil
+      end
       M.schedule_sync()
     end,
   })

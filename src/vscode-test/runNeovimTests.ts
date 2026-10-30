@@ -103,6 +103,7 @@ async function main(): Promise<void> {
     fs.mkdirSync(extensions);
     fs.cpSync(neovimExtension, path.join(extensions, path.basename(neovimExtension)), { recursive: true });
     fs.writeFileSync(path.join(workspace, "marks.txt"), "first line\nsecond line\nthird line\nfresh target line\nlast line\n");
+    fs.writeFileSync(path.join(workspace, "other.txt"), "another file\n");
     fs.writeFileSync(path.join(userData, "User", "settings.json"), JSON.stringify({
       "vscode-neovim.useWSL": false,
       [`vscode-neovim.neovimExecutablePaths.${process.platform}`]: nvimExecutable,
@@ -143,9 +144,9 @@ async function main(): Promise<void> {
       `--extensionTestsPath=${path.join(__dirname, "neovimSuite.js")}`,
     ], env);
     const report = JSON.parse(fs.readFileSync(path.join(temporary, "result.json"), "utf8"));
-    if (report.passed !== 5 || report.failed !== 0) throw new Error(`Incomplete E2E test result: ${JSON.stringify(report)}`);
+    if (report.passed !== 6 || report.failed !== 0) throw new Error(`Incomplete E2E test result: ${JSON.stringify(report)}`);
     for (const result of report.results) console.log(`ok   ${result}`);
-    console.log("5/5 real Neovim E2E tests passed");
+    console.log("6/6 real Neovim E2E tests passed");
     passed = true;
   } finally {
     if (passed) {

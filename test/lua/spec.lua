@@ -297,7 +297,82 @@ vim.api.nvim_del_user_command("NvimMarksRefresh")
 vim.keymap.del("n", "m")
 vim.keymap.del("n", "`")
 
--- 14. Outside VS Code, setup is a no-op and does not require the vscode module.
+-- 14. VS Code can wipe a document buffer when replacing a preview tab, then
+-- recreate it from text rather than reading the file through Neovim.
+marks.setup({ debounce_ms = 60000 })
+local recreated_file = tmp .. "/recreated.txt"
+local recreated_lines = { "first", "second", "third", "fourth" }
+vim.fn.writefile(recreated_lines, recreated_file)
+local function create_document(lines, before_list)
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_name(buf, recreated_file)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines or recreated_lines)
+  vim.bo[buf].buftype = "acwrite"
+  vim.bo[buf].modified = false
+  if before_list then before_list(buf) end
+  vim.bo[buf].buflisted = true
+  return buf
+end
+local function close_document(buf)
+  vim.api.nvim_set_current_buf(document_buf)
+  vim.api.nvim_buf_delete(buf, { force = true })
+end
+local recreated = create_document()
+vim.api.nvim_set_current_buf(recreated)
+vim.api.nvim_win_set_cursor(0, { 3, 1 })
+feed("ma")
+close_document(recreated) -- before the debounced mark update
+marks.setup({ debounce_ms = 5 }) -- settings changes must not discard recovery data
+recreated = create_document()
+check(vim.deep_equal(vim.api.nvim_buf_get_mark(recreated, "a"), { 3, 1 }),
+  "recreated document restores a local mark before BufEnter, even without a previous sync")
+vim.api.nvim_set_current_buf(recreated)
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+feed("`a")
+check(vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 3, 1 }),
+  "a recovered mark supports native jumps at its original line and byte column")
+
+vim.api.nvim_set_current_buf(document_buf)
+vim.api.nvim_buf_delete(recreated, { unload = true })
+local unloaded_entry = nil
+for _, e in ipairs(marks.collect().locals) do
+  if e.file == recreated_file then unloaded_entry = e end
+end
+check(unloaded_entry and find(unloaded_entry.marks, "a") ~= nil,
+  "unloaded buffers keep their native marks in the snapshot")
+vim.api.nvim_set_current_buf(recreated)
+vim.cmd("delmarks a")
+vim.api.nvim_set_current_buf(document_buf)
+vim.api.nvim_set_current_buf(recreated)
+check(vim.api.nvim_buf_get_mark(recreated, "a")[1] == 0,
+  "switching back does not resurrect an explicitly deleted mark")
+close_document(recreated)
+recreated = create_document()
+check(vim.api.nvim_buf_get_mark(recreated, "a")[1] == 0,
+  "recreating a document does not resurrect an explicitly deleted mark")
+
+vim.api.nvim_buf_set_mark(recreated, "a", 2, 1, {})
+vim.api.nvim_buf_set_mark(recreated, "b", 4, 2, {})
+close_document(recreated)
+recreated = create_document({ "first", "second" }, function(buf)
+  vim.api.nvim_buf_set_mark(buf, "a", 1, 0, {})
+end)
+check(vim.deep_equal(vim.api.nvim_buf_get_mark(recreated, "a"), { 1, 0 }),
+  "recovery preserves a mark already set in the new buffer")
+check(vim.api.nvim_buf_get_mark(recreated, "b")[1] == 0,
+  "recovery skips marks beyond the end of a changed file")
+check(vim.api.nvim_buf_get_mark(document_buf, "a")[1] == 0,
+  "recovery never copies local marks into another file")
+close_document(recreated)
+marks.teardown()
+marks.setup({ debounce_ms = 5 })
+recreated = create_document()
+check(vim.api.nvim_buf_get_mark(recreated, "a")[1] == 0,
+  "teardown discards session recovery data")
+marks.teardown()
+close_document(recreated)
+
+-- 15. Outside VS Code, setup is a no-op and does not require the vscode module.
 package.loaded["nvim-marks"] = nil
 package.loaded["vscode"] = nil
 package.preload["vscode"] = nil

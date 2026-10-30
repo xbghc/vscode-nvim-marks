@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.9 (pre-release)
+
+- Restore local marks when VS Code replaces a preview tab or recreates a document buffer in the same Neovim session. Preserve native jumps and explicit mark deletions.
+- Include native marks from unloaded document buffers in snapshots so file switches do not remove them from the mark list.
+
 ## 0.1.8 (pre-release)
 
 - Preview marks on backtick while keeping keyboard focus in the editor. Press the mark key to jump directly without typing into search or pressing Enter; the preview closes on a target key or Escape. The searchable picker remains available through **Neovim Marks: List marks**.

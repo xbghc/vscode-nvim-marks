@@ -55,6 +55,12 @@ both lowercase (local) and uppercase (global) marks appear as plain bold
 letters without a border. When several marks sit on one line the icon shows the first
 two letters, or one letter and `+`.
 
+Lowercase marks belong to their file. If VS Code replaces a preview tab or
+recreates a document buffer, the extension restores that file's local marks
+when it reopens in the same Neovim session. Native jumps still work, and marks
+removed with `:delmarks` stay deleted. This recovery data is held in memory;
+it does not provide persistence across Neovim restarts.
+
 Press **backtick (`` ` ``)** in normal mode to preview the mark list, then the mark
 letter to jump directly to its exact line and column. For example, `` `a `` jumps to local mark
 `a` and `` `A `` jumps to global mark `A`, including in another file. Focus stays
@@ -142,7 +148,8 @@ The extension sends its bundled Lua source through the public
 between VS Code and Neovim. A small probe every five seconds detects Neovim
 restarts and loads the module into the new session automatically.
 
-1. On the triggers above, Lua collects `a`–`z` marks of every loaded buffer via
+1. On the triggers above, Lua collects `a`–`z` marks of every document buffer,
+   including unloaded buffers, via
    `getmarklist(buf)` and `A`–`Z` marks via `getmarklist()`, with absolute
    file paths and 1-based positions.
 2. If the snapshot differs from the last one it is sent with
@@ -183,7 +190,7 @@ npm run package      # build the .vsix
 The bridge test uses an installed `asvetliakov.vscode-neovim` extension, an
 isolated VS Code profile and a minimal Neovim config with no nvim-marks setup.
 It covers automatic loading, preview focus, direct mark jumps, cancellation,
-restart recovery, settings and deactivation cleanup. The renderer-only `test:vscode` suite uses a test fixture
+preview-tab switching, restart recovery, settings and deactivation cleanup. The renderer-only `test:vscode` suite uses a test fixture
 for the dependency and injects snapshots directly.
 Set `NVIM_MARKS_NEOVIM_EXTENSION` to the installed extension directory when it
 is not under `~/.vscode/extensions`. Set `VSCODE_EXECUTABLE_PATH` to a local
