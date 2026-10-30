@@ -148,10 +148,11 @@ The extension sends its bundled Lua source through the public
 between VS Code and Neovim. A small probe every five seconds detects Neovim
 restarts and loads the module into the new session automatically.
 
-1. On the triggers above, Lua collects `a`–`z` marks of every document buffer,
-   including unloaded buffers, via
-   `getmarklist(buf)` and `A`–`Z` marks via `getmarklist()`, with absolute
-   file paths and 1-based positions.
+1. On the triggers above, Lua collects `a`–`z` marks via `getmarklist(buf)`
+   and `A`–`Z` marks via `getmarklist()`, with absolute file paths and 1-based
+   positions. It retains local marks before a document buffer is unloaded or
+   wiped, includes saved marks for unloaded buffers in snapshots, and restores
+   native marks when the file is loaded again.
 2. If the snapshot differs from the last one it is sent with
    `vscode.action("nvimMarks.update", { args = { payload } })`.
 3. The extension normalizes paths, converts to 0-based positions and groups

@@ -38,7 +38,7 @@ local group = nil
 local command_definition = nil
 local mappings = {}
 -- VS Code may close a preview document and recreate its Neovim buffer later.
--- Keep only marks from wiped document buffers, until that file is reopened.
+-- Keep marks from unloaded/wiped document buffers until that file is reopened.
 local retired_marks = {}
 
 local function global_mapping(lhs)
@@ -111,10 +111,11 @@ function M.collect()
   local locals = {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     -- vscode-neovim sets buftype=acwrite on every document buffer.
-    -- Unloaded buffers still own native marks; do not drop them on a switch.
+    -- Newer Neovim versions clear local marks on unload, so use the snapshot
+    -- captured before unloading until the native marks can be restored.
     local file = document_file(buf)
     if file then
-      local marks = local_marks(buf)
+      local marks = not vim.api.nvim_buf_is_loaded(buf) and retired_marks[file] or local_marks(buf)
       if #marks > 0 then
         locals[#locals + 1] = { file = file, marks = marks }
       end
@@ -290,16 +291,18 @@ function M.setup(opts)
     end,
   })
 
-  vim.api.nvim_create_autocmd("BufWipeout", {
+  vim.api.nvim_create_autocmd({ "BufUnload", "BufWipeout" }, {
     group = group,
     callback = function(event)
       local file = document_file(event.buf)
-      if file then
+      if file and (event.event == "BufUnload" or not retired_marks[file]) then
         -- Read live marks before destruction, even if the last m/:delmarks
         -- happened too recently for the debounced snapshot to reach VS Code.
         local marks = local_marks(event.buf)
         retired_marks[file] = #marks > 0 and marks or nil
       end
+      -- BufWipeout may follow BufUnload after Neovim has cleared the marks.
+      -- Retain the earlier snapshot rather than replace it with an empty one.
       M.schedule_sync()
     end,
   })

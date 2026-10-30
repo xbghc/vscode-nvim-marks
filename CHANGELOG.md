@@ -3,7 +3,7 @@
 ## 0.1.9 (pre-release)
 
 - Restore local marks when VS Code replaces a preview tab or recreates a document buffer in the same Neovim session. Preserve native jumps and explicit mark deletions.
-- Include native marks from unloaded document buffers in snapshots so file switches do not remove them from the mark list.
+- Retain local marks while document buffers are unloaded, including on newer Neovim versions that clear native marks on unload.
 
 ## 0.1.8 (pre-release)
 

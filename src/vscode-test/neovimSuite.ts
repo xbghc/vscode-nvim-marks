@@ -224,7 +224,7 @@ export async function run(): Promise<void> {
     await settings.update("mapM", true, vscode.ConfigurationTarget.Global);
     await settings.update("mapBacktick", true, vscode.ConfigurationTarget.Global);
     await waitFor(async () => await lua("return vim.fn.maparg('`', 'n', false, true).desc") === "Jump to Neovim mark", "re-enable shortcuts");
-    assert.equal(await lua("return #vim.api.nvim_get_autocmds({group='NvimMarksSync'})"), 10, "reconfiguration does not duplicate autocmds");
+    assert.equal(await lua("return #vim.api.nvim_get_autocmds({group='NvimMarksSync'})"), 11, "reconfiguration does not duplicate autocmds");
     const lifecycle = require(path.join(marksExtension.extensionPath, "dist/extension.js")) as { deactivate(): Promise<void> };
     await bounded(lifecycle.deactivate(), "deactivate Neovim Marks");
     assert.equal(await lua("return package.loaded['nvim-marks'] == nil"), true);

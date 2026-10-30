@@ -341,6 +341,8 @@ end
 check(unloaded_entry and find(unloaded_entry.marks, "a") ~= nil,
   "unloaded buffers keep their native marks in the snapshot")
 vim.api.nvim_set_current_buf(recreated)
+check(vim.deep_equal(vim.api.nvim_buf_get_mark(recreated, "a"), { 3, 1 }),
+  "reloading an unloaded buffer restores its native mark on all supported Neovim versions")
 vim.cmd("delmarks a")
 vim.api.nvim_set_current_buf(document_buf)
 vim.api.nvim_set_current_buf(recreated)
