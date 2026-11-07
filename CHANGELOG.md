@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.10 (pre-release)
+
+- Preserve both local (`a-z`) and global (`A-Z`) marks when document buffers are unloaded or wiped, keeping them in snapshots while closed and restoring them when reopened or jumped to.
+- Ignore non-file buffers (`nofile`, `help`, `terminal`) and non-file URI schemes (`untitled:`, `output:`, `git:`) when collecting marks.
+- Harden path normalization, payload validation, SVG color escaping, configuration reloading and Neovim bridge recovery.
+
 ## 0.1.9 (pre-release)
 
 - Restore local marks when VS Code replaces a preview tab or recreates a document buffer in the same Neovim session. Preserve native jumps and explicit mark deletions.

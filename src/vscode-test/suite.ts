@@ -3,6 +3,7 @@
  * No mocha: a tiny runner with node:assert keeps dependencies minimal.
  */
 import * as vscode from "vscode";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import assert from "node:assert/strict";
 import type { NvimMarksApi } from "../extension";
@@ -81,7 +82,14 @@ async function useMarkPicker(
 test("extension activates and registers its commands", async () => {
   await api();
   const cmds = await vscode.commands.getCommands(true);
-  for (const c of ["nvimMarks.update", "nvimMarks.list", "nvimMarks.toggle", "nvimMarks.status"]) {
+  for (const c of [
+    "nvimMarks.update",
+    "nvimMarks.list",
+    "nvimMarks.preview",
+    "nvimMarks.hidePreview",
+    "nvimMarks.toggle",
+    "nvimMarks.status",
+  ]) {
     assert.ok(cmds.includes(c), `command ${c} registered`);
   }
 });
@@ -351,6 +359,127 @@ test("mark jumps clamp stale line and column positions to the document", async (
     const end = editor.document.lineAt(expectedLine).range.end;
     assert.ok(editor.selection.active.isEqual(end), "an out-of-range mark lands at the valid line end");
   }
+});
+
+test("configuration changes filter and restyle applied decorations", async () => {
+  const a = await api();
+  const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(fileA));
+  await vscode.window.showTextDocument(doc);
+  const cfg = vscode.workspace.getConfiguration("nvimMarks");
+  const set = (key: string, value: unknown) => cfg.update(key, value, vscode.ConfigurationTarget.Global);
+
+  try {
+    await vscode.commands.executeCommand("nvimMarks.update", {
+      version: 1,
+      plugin_version: a.status().extensionVersion,
+      locals: [{ file: fileA, marks: [{ name: "a", line: 2, col: 1 }, { name: "c", line: 4, col: 1 }] }],
+      globals: [{ name: "Q", file: fileA, line: 4, col: 1 }],
+    });
+    await waitFor(() => [...a.appliedFor(doc).keys()].sort().join(",") === "global:cQ,local:a");
+
+    await set("enabled", false);
+    await waitFor(() => a.appliedFor(doc).size === 0);
+
+    await set("enabled", true);
+    await waitFor(() => [...a.appliedFor(doc).keys()].sort().join(",") === "global:cQ,local:a");
+
+    await set("showLocalMarks", false);
+    await waitFor(() => [...a.appliedFor(doc).keys()].join(",") === "global:Q");
+
+    await set("showLocalMarks", true);
+    await set("showGlobalMarks", false);
+    await waitFor(() => [...a.appliedFor(doc).keys()].sort().join(",") === "local:a,local:c");
+
+    await set("showGlobalMarks", true);
+    await waitFor(() => [...a.appliedFor(doc).keys()].sort().join(",") === "global:cQ,local:a");
+
+    for (const style of ["eol", "both", "gutter"] as const) {
+      await set("style", style);
+      assert.deepEqual([...a.appliedFor(doc).keys()].sort(), ["global:cQ", "local:a"]);
+    }
+
+    await set("overviewRuler", false);
+    assert.deepEqual([...a.appliedFor(doc).keys()].sort(), ["global:cQ", "local:a"]);
+  } finally {
+    for (const key of ["enabled", "showLocalMarks", "showGlobalMarks", "style", "overviewRuler"]) {
+      await set(key, undefined);
+    }
+  }
+});
+
+test("preview and hidePreview update snapshot and close cleanly", async () => {
+  const a = await api();
+  const docA = await vscode.workspace.openTextDocument(vscode.Uri.file(fileA));
+  await vscode.window.showTextDocument(docA);
+  const before = a.status().updates;
+
+  try {
+    await vscode.commands.executeCommand("nvimMarks.preview", {
+      version: 1,
+      plugin_version: a.status().extensionVersion,
+      locals: [{ file: fileA, marks: [{ name: "p", line: 2, col: 1 }] }],
+      globals: [{ name: "P", file: fileB, line: 1, col: 1 }],
+    });
+    assert.equal(a.status().updates, before + 1);
+    assert.deepEqual(a.marks().map((m) => m.name).sort(), ["P", "p"]);
+    await waitFor(() => a.appliedFor(docA).has("local:p"));
+  } finally {
+    await vscode.commands.executeCommand("nvimMarks.hidePreview");
+  }
+});
+
+test("untitled non-file documents are ignored without throwing", async () => {
+  const a = await api();
+  const untitled = await vscode.workspace.openTextDocument({ content: "scratch\nline 2" });
+  await vscode.window.showTextDocument(untitled);
+  try {
+    await vscode.commands.executeCommand("nvimMarks.update", {
+      version: 1,
+      plugin_version: a.status().extensionVersion,
+      locals: [{ file: fileA, marks: [{ name: "a", line: 1, col: 1 }] }],
+      globals: [],
+    });
+    assert.deepEqual(a.marksFor(untitled), []);
+    assert.equal(a.appliedFor(untitled).size, 0);
+  } finally {
+    await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
+  }
+});
+
+test("list command handles unopened files and $(icon) text in labels", async () => {
+  const a = await api();
+  const fileIcon = path.join(ws, "icon.txt");
+  fs.writeFileSync(fileIcon, ["first", "$(warning) literal", "last"].join("\n"));
+
+  const docA = await vscode.workspace.openTextDocument(vscode.Uri.file(fileA));
+  await vscode.window.showTextDocument(docA);
+
+  // First jump when icon.txt has not been opened in VS Code yet.
+  await useMarkPicker("accept", {
+    version: 1,
+    plugin_version: a.status().extensionVersion,
+    locals: [],
+    globals: [{ name: "W", file: fileIcon, line: 2, col: 4 }],
+  });
+  await waitFor(() => activeFileKey() === normalize(fileIcon));
+  assert.deepEqual(
+    [vscode.window.activeTextEditor!.selection.active.line, vscode.window.activeTextEditor!.selection.active.character],
+    [1, 3],
+  );
+
+  // Second jump when icon.txt is already open and its line text contains $(warning).
+  await vscode.window.showTextDocument(docA);
+  await useMarkPicker("accept", {
+    version: 1,
+    plugin_version: a.status().extensionVersion,
+    locals: [],
+    globals: [{ name: "W", file: fileIcon, line: 2, col: 12 }],
+  });
+  await waitFor(() => activeFileKey() === normalize(fileIcon));
+  assert.deepEqual(
+    [vscode.window.activeTextEditor!.selection.active.line, vscode.window.activeTextEditor!.selection.active.character],
+    [1, 11],
+  );
 });
 
 export async function run(): Promise<void> {

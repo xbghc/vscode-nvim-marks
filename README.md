@@ -55,11 +55,12 @@ both lowercase (local) and uppercase (global) marks appear as plain bold
 letters without a border. When several marks sit on one line the icon shows the first
 two letters, or one letter and `+`.
 
-Lowercase marks belong to their file. If VS Code replaces a preview tab or
-recreates a document buffer, the extension restores that file's local marks
-when it reopens in the same Neovim session. Native jumps still work, and marks
-removed with `:delmarks` stay deleted. This recovery data is held in memory;
-it does not provide persistence across Neovim restarts.
+Lowercase marks belong to their file, and uppercase marks jump across files.
+If VS Code replaces a preview tab or recreates a document buffer, the extension
+retains and restores that file's marks when it reopens in the same Neovim
+session. Native jumps still work, and marks removed with `:delmarks` stay
+deleted. This recovery data is held in memory; it does not provide persistence
+across Neovim restarts.
 
 Press **backtick (`` ` ``)** in normal mode to preview the mark list, then the mark
 letter to jump directly to its exact line and column. For example, `` `a `` jumps to local mark

@@ -11,7 +11,7 @@ local M = {}
 --- Release of this plugin, sent with every payload so the VS Code extension
 --- can tell when the two halves drift apart. test/lua/spec.lua keeps it equal
 --- to the version in package.json.
-M.version = "0.1.9"
+M.version = "0.1.10"
 
 local defaults = {
   --- Wrap `m` in normal mode so a newly set mark shows up immediately
@@ -40,6 +40,8 @@ local mappings = {}
 -- VS Code may close a preview document and recreate its Neovim buffer later.
 -- Keep marks from unloaded/wiped document buffers until that file is reopened.
 local retired_marks = {}
+local attached_bufs = {}
+local is_win = vim.fn.has("win32") == 1
 
 local function global_mapping(lhs)
   for _, mapping in ipairs(vim.api.nvim_get_keymap("n")) do
@@ -70,7 +72,25 @@ local function abs(file)
   if file == nil or file == "" then
     return nil
   end
+  -- Reject non-file URI schemes (2+ scheme chars before ':', e.g. untitled:,
+  -- vscode://, term://, output:, git:), including scheme-prefixed names that
+  -- Neovim resolved relative to cwd, while keeping Windows drive paths.
+  if file:match("^[a-zA-Z][a-zA-Z0-9+.-]+:") or file:match("[/\\][a-zA-Z][a-zA-Z0-9+.-]+:") then
+    return nil
+  end
   return vim.fn.fnamemodify(file, ":p")
+end
+
+local function file_key(file)
+  if not file or file == "" then
+    return nil
+  end
+  local s = file:gsub("\\", "/")
+  s = s:gsub("([^/:])/+$", "%1")
+  if is_win then
+    s = s:lower()
+  end
+  return s
 end
 
 local function document_file(buf)
@@ -84,23 +104,110 @@ local function local_marks(buf)
   local marks = {}
   for _, m in ipairs(vim.fn.getmarklist(buf)) do
     local name = m.mark:sub(2)
-    if name:match("^[a-z]$") then
+    if name:match("^[a-z]$") and m.pos[2] > 0 then
       marks[#marks + 1] = { name = name, line = m.pos[2], col = m.pos[3] }
     end
   end
   return marks
 end
 
+local function global_marks_for_buf(buf, key)
+  local marks = {}
+  for _, m in ipairs(vim.fn.getmarklist()) do
+    local name = m.mark:sub(2)
+    if name:match("^[A-Z]$") and m.pos[2] > 0 then
+      local match = m.pos[1] == buf
+      if not match and m.pos[1] == 0 then
+        local mfile = abs(m.file)
+        match = mfile ~= nil and file_key(mfile) == key
+      end
+      if match then
+        marks[#marks + 1] = { name = name, line = m.pos[2], col = m.pos[3] }
+      end
+    end
+  end
+  return marks
+end
+
+local function remove_retired_global(name)
+  for k, saved in pairs(retired_marks) do
+    if saved.globals then
+      for i = #saved.globals, 1, -1 do
+        if saved.globals[i].name == name then
+          table.remove(saved.globals, i)
+        end
+      end
+      if #(saved.locals or {}) == 0 and #saved.globals == 0 then
+        retired_marks[k] = nil
+      end
+    end
+  end
+end
+
 local function restore_marks(buf)
-  local file = document_file(buf)
-  local saved = file and retired_marks[file]
-  if not saved or not vim.api.nvim_buf_is_loaded(buf) then return end
-  -- Consume once: revisiting this buffer must never undo a later :delmarks.
-  retired_marks[file] = nil
+  if not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_buf_is_loaded(buf) then
+    return
+  end
+  local buftype = vim.bo[buf].buftype
+  if buftype ~= "" and buftype ~= "acwrite" and buftype ~= "nofile" then
+    return
+  end
+  local file = abs(vim.api.nvim_buf_get_name(buf))
+  local key = file_key(file)
+  local saved = key and retired_marks[key]
+  if not saved then return end
   local line_count = vim.api.nvim_buf_line_count(buf)
-  for _, mark in ipairs(saved) do
+  if line_count == 1 and vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == "" then
+    local needs_later_lines = false
+    for _, mark in ipairs(saved.locals or {}) do
+      if mark.line > 1 or mark.col > 1 then needs_later_lines = true break end
+    end
+    if not needs_later_lines then
+      for _, mark in ipairs(saved.globals or {}) do
+        if mark.line > 1 or mark.col > 1 then needs_later_lines = true break end
+      end
+    end
+    if needs_later_lines then
+      if not attached_bufs[buf] then
+        attached_bufs[buf] = true
+        local epoch = generation
+        vim.api.nvim_buf_attach(buf, false, {
+          on_lines = function(_, b)
+            if not active or generation ~= epoch then
+              attached_bufs[b] = nil
+              return true
+            end
+            restore_marks(b)
+            M.schedule_sync()
+            if not retired_marks[key] then
+              attached_bufs[b] = nil
+              return true
+            end
+          end,
+          on_detach = function(_, b)
+            attached_bufs[b] = nil
+          end,
+        })
+      end
+      return
+    end
+  end
+  -- Consume once: revisiting this buffer must never undo a later :delmarks.
+  retired_marks[key] = nil
+  for _, mark in ipairs(saved.locals or {}) do
     if mark.line > 0 and mark.line <= line_count and vim.api.nvim_buf_get_mark(buf, mark.name)[1] == 0 then
-      vim.api.nvim_buf_set_mark(buf, mark.name, mark.line, mark.col - 1, {})
+      pcall(vim.api.nvim_buf_set_mark, buf, mark.name, mark.line, mark.col - 1, {})
+    end
+  end
+  for _, mark in ipairs(saved.globals or {}) do
+    if mark.line > 0 and mark.line <= line_count then
+      local pos = vim.fn.getpos("'" .. mark.name)
+      local deleted = pos[1] == 0 and pos[2] == 0
+      local in_other_valid_buf = pos[1] ~= 0 and pos[1] ~= buf and pos[1] ~= saved.buf and vim.api.nvim_buf_is_valid(pos[1])
+      local already_set_in_new_buf = buf ~= saved.buf and vim.api.nvim_buf_get_mark(buf, mark.name)[1] > 0
+      if not deleted and not in_other_valid_buf and not already_set_in_new_buf then
+        pcall(vim.api.nvim_buf_set_mark, buf, mark.name, mark.line, mark.col - 1, {})
+      end
     end
   end
 end
@@ -109,35 +216,84 @@ end
 --- @return table payload  { version = 1, plugin_version = "x.y.z", locals = {...}, globals = {...} }
 function M.collect()
   local locals = {}
+  local seen_local_keys = {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     -- vscode-neovim sets buftype=acwrite on every document buffer.
     -- Newer Neovim versions clear local marks on unload, so use the snapshot
     -- captured before unloading until the native marks can be restored.
     local file = document_file(buf)
-    if file then
-      local marks = not vim.api.nvim_buf_is_loaded(buf) and retired_marks[file] or local_marks(buf)
+    local key = file_key(file)
+    if file and key then
+      seen_local_keys[key] = true
+      local marks
+      if vim.api.nvim_buf_is_loaded(buf) then
+        restore_marks(buf)
+        marks = local_marks(buf)
+      else
+        local saved = retired_marks[key]
+        marks = (saved and saved.locals) or local_marks(buf)
+      end
       if #marks > 0 then
         locals[#locals + 1] = { file = file, marks = marks }
       end
     end
   end
+  for key, saved in pairs(retired_marks) do
+    if not seen_local_keys[key] and saved.locals and #saved.locals > 0 then
+      locals[#locals + 1] = { file = saved.file, marks = saved.locals }
+    end
+  end
 
   local globals = {}
+  local seen_global_names = {}
   for _, m in ipairs(vim.fn.getmarklist()) do
     local name = m.mark:sub(2)
-    if name:match("^[A-Z]$") then
+    if name:match("^[A-Z]$") and m.pos[2] > 0 then
       local file = m.file
+      local line = m.pos[2]
+      local col = m.pos[3]
+      local skip = false
       -- A global mark in a loaded buffer carries the buffer number; prefer
-      -- the buffer's name, which is always absolute.
+      -- the buffer's name, which is always absolute, and reject non-file buftypes.
       if m.pos[1] ~= 0 and vim.api.nvim_buf_is_valid(m.pos[1]) then
-        local bufname = vim.api.nvim_buf_get_name(m.pos[1])
-        if bufname ~= "" then
-          file = bufname
+        local buftype = vim.bo[m.pos[1]].buftype
+        if buftype ~= "" and buftype ~= "acwrite" then
+          skip = true
+        else
+          local bufname = vim.api.nvim_buf_get_name(m.pos[1])
+          if bufname ~= "" then
+            file = bufname
+          end
+          if not vim.api.nvim_buf_is_loaded(m.pos[1]) then
+            local k = file_key(abs(file))
+            local saved = k and retired_marks[k]
+            if saved and saved.globals then
+              for _, g in ipairs(saved.globals) do
+                if g.name == name then
+                  line = g.line
+                  col = g.col
+                  break
+                end
+              end
+            end
+          end
         end
       end
-      file = abs(file)
+      if vim.api.nvim_buf_is_valid(m.pos[1]) and vim.api.nvim_buf_is_loaded(m.pos[1]) then
+        remove_retired_global(name)
+      end
+      seen_global_names[name] = true
+      file = not skip and abs(file) or nil
       if file then
-        globals[#globals + 1] = { name = name, file = file, line = m.pos[2], col = m.pos[3] }
+        globals[#globals + 1] = { name = name, file = file, line = line, col = col }
+      end
+    end
+  end
+  for _, saved in pairs(retired_marks) do
+    for _, g in ipairs(saved.globals or {}) do
+      if not seen_global_names[g.name] and vim.fn.getpos("'" .. g.name)[2] > 0 then
+        seen_global_names[g.name] = true
+        globals[#globals + 1] = { name = g.name, file = saved.file, line = g.line, col = g.col }
       end
     end
   end
@@ -174,7 +330,9 @@ function M.list()
   if not vs then
     return false
   end
-  vs.action("nvimMarks.list", { args = { M.collect() } })
+  local payload = M.collect()
+  last_sent = vim.json.encode(payload)
+  vs.action("nvimMarks.list", { args = { payload } })
   return true
 end
 
@@ -216,10 +374,30 @@ end
 
 local function jump_mark_interactive()
   local vs = vscode()
-  if vs then vs.action("nvimMarks.preview", { args = { M.collect() } }) end
+  if vs then
+    local payload = M.collect()
+    last_sent = vim.json.encode(payload)
+    vs.action("nvimMarks.preview", { args = { payload } })
+  end
   local ok, ch = pcall(vim.fn.getcharstr)
   if vs then vs.action("nvimMarks.hidePreview") end
   if not ok or ch == "" or ch == "\27" then return "" end
+  if ch:match("^[A-Z]$") then
+    local pos = vim.fn.getpos("'" .. ch)
+    if pos[2] > 0 and (pos[1] == 0 or not vim.api.nvim_buf_is_valid(pos[1]) or not vim.api.nvim_buf_is_loaded(pos[1])) then
+      for _, saved in pairs(retired_marks) do
+        for _, g in ipairs(saved.globals or {}) do
+          if g.name == ch and vim.fn.filereadable(saved.file) == 1 then
+            local b = vim.fn.bufadd(saved.file)
+            vim.bo[b].swapfile = false
+            pcall(vim.fn.bufload, b)
+            restore_marks(b)
+            break
+          end
+        end
+      end
+    end
+  end
   -- Return an unmapped native jump, preserving special marks and the jumplist.
   return "`" .. ch
 end
@@ -253,12 +431,19 @@ function M.teardown()
   last_sent = nil
   vscode_mod = nil
   retired_marks = {}
+  attached_bufs = {}
 end
 
 function M.setup(opts)
   local saved_marks = retired_marks
   M.teardown()
   M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
+  if type(M.config.debounce_ms) ~= "number"
+    or M.config.debounce_ms < 0
+    or M.config.debounce_ms ~= math.floor(M.config.debounce_ms)
+  then
+    M.config.debounce_ms = defaults.debounce_ms
+  end
 
   if not vim.g.vscode then
     -- Outside VS Code the sign column already shows marks via other plugins;
@@ -282,7 +467,13 @@ function M.setup(opts)
     "InsertLeave",
     "TextChanged",
   }
-  vim.list_extend(events, M.config.extra_events)
+  if type(M.config.extra_events) == "table" then
+    for _, ev in ipairs(M.config.extra_events) do
+      if type(ev) == "string" and vim.fn.exists("##" .. ev) == 1 then
+        events[#events + 1] = ev
+      end
+    end
+  end
   vim.api.nvim_create_autocmd(events, {
     group = group,
     callback = function(event)
@@ -295,11 +486,20 @@ function M.setup(opts)
     group = group,
     callback = function(event)
       local file = document_file(event.buf)
-      if file and (event.event == "BufUnload" or not retired_marks[file]) then
+      local key = file_key(file)
+      if file and key and (event.event == "BufUnload" or not retired_marks[key]) then
         -- Read live marks before destruction, even if the last m/:delmarks
         -- happened too recently for the debounced snapshot to reach VS Code.
-        local marks = local_marks(event.buf)
-        retired_marks[file] = #marks > 0 and marks or nil
+        local locals = local_marks(event.buf)
+        local globals = global_marks_for_buf(event.buf, key)
+        for _, g in ipairs(globals) do
+          remove_retired_global(g.name)
+        end
+        if #locals > 0 or #globals > 0 then
+          retired_marks[key] = { file = file, buf = event.buf, locals = locals, globals = globals }
+        else
+          retired_marks[key] = nil
+        end
       end
       -- BufWipeout may follow BufUnload after Neovim has cleared the marks.
       -- Retain the earlier snapshot rather than replace it with an empty one.

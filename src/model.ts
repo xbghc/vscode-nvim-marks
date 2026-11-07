@@ -60,7 +60,10 @@ export function makeNormalizer(platform: string): PathNormalizer {
   const win = platform === "win32";
   return (p: string) => {
     let s = p.replace(/\\/g, "/");
-    if (s.length > 1 && s.endsWith("/")) s = s.slice(0, -1);
+    const hadSlash = s.endsWith("/");
+    s = s.replace(/\/+$/, "");
+    if (hadSlash && s === "") s = "/";
+    else if (hadSlash && /^[a-zA-Z]:$/.test(s)) s += "/";
     if (win) s = s.toLowerCase();
     return s;
   };
@@ -71,7 +74,7 @@ function isObject(x: unknown): x is Record<string, unknown> {
 }
 
 function num(x: unknown): number | undefined {
-  return typeof x === "number" && Number.isFinite(x) ? x : undefined;
+  return typeof x === "number" && Number.isInteger(x) ? x : undefined;
 }
 
 /** Wire protocol version this extension understands (`version` in the payload). */
@@ -95,7 +98,7 @@ export interface CompatIssue {
   message: string;
 }
 
-const VERSION_RE = /^(\d+)\.(\d+)\.(\d+)/;
+const VERSION_RE = /^(\d+)\.(\d+)\.(\d+)(?=$|[-+])/;
 
 /**
  * Compare the numeric major.minor.patch of two versions; a suffix such as
@@ -132,10 +135,12 @@ export function checkCompat(info: PayloadInfo): CompatIssue | undefined {
       message: `the Neovim plugin sends protocol ${protocol}, this extension understands ${PROTOCOL_VERSION}. Update the Neovim Marks extension in VS Code.`,
     };
   }
-  if (protocol !== undefined && protocol < PROTOCOL_VERSION) {
+  if (protocol === undefined || protocol < PROTOCOL_VERSION) {
     return {
       outdated: "plugin",
-      message: `the Neovim plugin sends protocol ${protocol}, this extension needs ${PROTOCOL_VERSION}. ${updatePlugin}`,
+      message: protocol === undefined
+        ? `the Neovim plugin did not report a valid protocol version, this extension needs ${PROTOCOL_VERSION}. ${updatePlugin}`
+        : `the Neovim plugin sends protocol ${protocol}, this extension needs ${PROTOCOL_VERSION}. ${updatePlugin}`,
     };
   }
   const cmp = pluginVersion === undefined ? undefined : compareVersions(pluginVersion, MIN_PLUGIN_VERSION);
@@ -163,6 +168,7 @@ export function buildStore(raw: unknown, normalize: PathNormalizer): MarkStore {
     else byFile.set(m.file, [m]);
   };
 
+  const localMap = new Map<string, Mark>();
   const locals = Array.isArray(raw.locals) ? raw.locals : [];
   for (const entry of locals) {
     if (!isObject(entry) || typeof entry.file !== "string" || entry.file === "") continue;
@@ -172,20 +178,25 @@ export function buildStore(raw: unknown, normalize: PathNormalizer): MarkStore {
       if (!isObject(wm) || typeof wm.name !== "string" || !LOCAL_RE.test(wm.name)) continue;
       const line = num(wm.line);
       if (line === undefined || line < 1) continue;
-      const col = num(wm.col) ?? 1;
-      push({ name: wm.name, kind: "local", file, line: line - 1, col: Math.max(0, col - 1) });
+      const rawCol = num(wm.col);
+      const col = rawCol ?? 1;
+      localMap.set(`${file}\0${wm.name}`, { name: wm.name, kind: "local", file, line: line - 1, col: Math.max(0, col - 1) });
     }
   }
+  for (const m of localMap.values()) push(m);
 
+  const globalMap = new Map<string, Mark>();
   const globals = Array.isArray(raw.globals) ? raw.globals : [];
   for (const wm of globals) {
     if (!isObject(wm) || typeof wm.name !== "string" || !GLOBAL_RE.test(wm.name)) continue;
     if (typeof wm.file !== "string" || wm.file === "") continue;
     const line = num(wm.line);
     if (line === undefined || line < 1) continue;
-    const col = num(wm.col) ?? 1;
-    push({ name: wm.name, kind: "global", file: normalize(wm.file), line: line - 1, col: Math.max(0, col - 1) });
+    const rawCol = num(wm.col);
+    const col = rawCol ?? 1;
+    globalMap.set(wm.name, { name: wm.name, kind: "global", file: normalize(wm.file), line: line - 1, col: Math.max(0, col - 1) });
   }
+  for (const m of globalMap.values()) push(m);
 
   for (const list of byFile.values()) list.sort(compareMarks);
   return { byFile };
@@ -221,7 +232,7 @@ export interface LabelOptions {
  * approach.
  */
 export function groupByLine(marks: Mark[], opts: LabelOptions): LineLabel[] {
-  const maxLetters = opts.maxLetters ?? 2;
+  const maxLetters = Math.max(1, Math.floor(opts.maxLetters ?? 2));
   const lines = new Map<number, Mark[]>();
   for (const m of marks) {
     if (m.kind === "local" && !opts.showLocal) continue;
@@ -234,7 +245,7 @@ export function groupByLine(marks: Mark[], opts: LabelOptions): LineLabel[] {
   for (const [line, list] of lines) {
     list.sort(compareMarks);
     const names = list.map((m) => m.name);
-    const label = names.length > maxLetters ? names.slice(0, maxLetters - 1).join("") + "+" : names.join("");
+    const label = names.length > maxLetters ? names.slice(0, Math.max(1, maxLetters - 1)).join("") + "+" : names.join("");
     const kind: MarkKind = list.some((m) => m.kind === "global") ? "global" : "local";
     out.push({ line, label, kind, marks: list });
   }

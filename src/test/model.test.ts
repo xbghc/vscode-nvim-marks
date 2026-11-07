@@ -151,3 +151,156 @@ test("checkCompat warns about plugins without the backtick picker mapping", () =
   assert.match(issue!.message, /reload VS Code/);
   assert.equal(checkCompat({ protocol: PROTOCOL_VERSION, pluginVersion: "0.1.4" }), undefined);
 });
+
+test("normalizer handles drive roots, multiple trailing slashes, UNC paths, and empty string", () => {
+  const win = makeNormalizer("win32");
+  assert.equal(win("C:\\"), "c:/");
+  assert.equal(win("C:/"), "c:/");
+  assert.equal(win("D:///"), "d:/");
+  assert.equal(win("\\\\Server\\Share\\File.ts\\"), "//server/share/file.ts");
+  assert.equal(win(""), "");
+  assert.equal(norm("/a/b///"), "/a/b");
+  assert.equal(norm("///"), "/");
+  assert.equal(norm("\\\\server\\share\\file.ts"), "//server/share/file.ts");
+  assert.equal(norm(""), "");
+});
+
+test("buildStore handles floats, non-finite numbers, negative/zero col, deduplication, and same-line sorting", () => {
+  const win = makeNormalizer("win32");
+  const store = buildStore(
+    {
+      locals: [
+        {
+          file: "/p/edge.ts",
+          marks: [
+            { name: "a", line: 1.5, col: 1 },
+            { name: "b", line: Number.NaN, col: 1 },
+            { name: "c", line: Number.POSITIVE_INFINITY, col: 1 },
+            { name: "d", line: Number.NEGATIVE_INFINITY, col: 1 },
+            { name: "e", line: 2, col: 2.5 },
+            { name: "f", line: 3, col: 0 },
+            { name: "g", line: 4, col: -2 },
+          ],
+        },
+        {
+          file: "/p/same.ts",
+          marks: [
+            { name: "b", line: 1, col: 5 },
+            { name: "a", line: 1, col: 2 },
+            { name: "a", line: 1, col: 9 },
+          ],
+        },
+      ],
+      globals: [
+        { name: "B", file: "/p/same.ts", line: 1, col: 3 },
+        { name: "A", file: "/p/other.ts", line: 7, col: 1 },
+        { name: "A", file: "/p/same.ts", line: 1, col: 4 },
+      ],
+    },
+    norm,
+  );
+
+  assert.deepEqual(
+    store.byFile.get("/p/edge.ts")!.map((m) => [m.name, m.line, m.col]),
+    [
+      ["e", 1, 0],
+      ["f", 2, 0],
+      ["g", 3, 0],
+    ],
+  );
+  assert.equal(store.byFile.has("/p/other.ts"), false);
+  assert.deepEqual(
+    store.byFile.get("/p/same.ts")!.map((m) => [m.name, m.kind, m.line, m.col]),
+    [
+      ["a", "local", 0, 8],
+      ["b", "local", 0, 4],
+      ["A", "global", 0, 3],
+      ["B", "global", 0, 2],
+    ],
+  );
+
+  const winStore = buildStore(
+    {
+      locals: [
+        { file: "C:\\a.ts", marks: [{ name: "a", line: 1, col: 1 }] },
+        { file: "c:/a.ts", marks: [{ name: "a", line: 5, col: 3 }] },
+      ],
+      globals: [],
+    },
+    win,
+  );
+  assert.deepEqual(
+    winStore.byFile.get("c:/a.ts")!.map((m) => [m.name, m.line, m.col]),
+    [["a", 4, 2]],
+  );
+});
+
+test("groupByLine handles empty input, mixed local/global lines, and small maxLetters", () => {
+  assert.deepEqual(groupByLine([], { showLocal: true, showGlobal: true }), []);
+
+  const pairMarks = buildStore(
+    {
+      locals: [{ file: "/f", marks: [{ name: "a", line: 1, col: 1 }] }],
+      globals: [{ name: "A", file: "/f", line: 1, col: 2 }],
+    },
+    norm,
+  ).byFile.get("/f")!;
+  assert.deepEqual(
+    groupByLine(pairMarks, { showLocal: true, showGlobal: false }).map((l) => [l.label, l.kind]),
+    [["a", "local"]],
+  );
+  assert.deepEqual(
+    groupByLine(pairMarks, { showLocal: false, showGlobal: true }).map((l) => [l.label, l.kind]),
+    [["A", "global"]],
+  );
+
+  const store = buildStore(
+    {
+      locals: [{ file: "/f", marks: [{ name: "a", line: 1, col: 1 }, { name: "b", line: 1, col: 2 }] }],
+      globals: [{ name: "A", file: "/f", line: 1, col: 3 }],
+    },
+    norm,
+  );
+  const marks = store.byFile.get("/f")!;
+
+  assert.deepEqual(
+    groupByLine(marks, { showLocal: true, showGlobal: true }).map((l) => [l.label, l.kind]),
+    [["a+", "global"]],
+  );
+  assert.deepEqual(
+    groupByLine(marks, { showLocal: true, showGlobal: false, maxLetters: 1 }).map((l) => l.label),
+    ["a+"],
+  );
+  assert.deepEqual(
+    groupByLine(marks, { showLocal: true, showGlobal: false, maxLetters: 0 }).map((l) => l.label),
+    ["a+"],
+  );
+});
+
+test("compareVersions, payloadInfo, and checkCompat handle malformed versions and missing protocol", () => {
+  assert.equal(compareVersions("0.1.3", "dev"), undefined);
+  assert.equal(compareVersions("0.1.3+2026", "0.1.3"), 0);
+  assert.equal(compareVersions("0.1.3.4", "0.1.3"), undefined);
+  assert.equal(compareVersions("0.1.3abc", "0.1.3"), undefined);
+
+  assert.deepEqual(payloadInfo({ version: 1.5, plugin_version: "" }), {});
+  assert.deepEqual(payloadInfo({ version: Number.NaN, plugin_version: "0.1.4" }), { pluginVersion: "0.1.4" });
+
+  const missingProto = checkCompat({ pluginVersion: "0.1.9" });
+  assert.equal(missingProto?.outdated, "plugin");
+  assert.match(missingProto!.message, /did not report a valid protocol version/);
+
+  const badVer = checkCompat({ protocol: PROTOCOL_VERSION, pluginVersion: "dev" });
+  assert.equal(badVer?.outdated, "plugin");
+  assert.match(badVer!.message, /is dev/);
+});
+
+test("markIconSvg scales font size by label length and escapes color attributes", () => {
+  assert.match(markIconSvg("a", "#000"), /font-size="11"/);
+  assert.match(markIconSvg("ab", "#000"), /font-size="8\.5"/);
+  assert.match(markIconSvg("a+", "#000"), /font-size="8\.5"/);
+  assert.match(markIconSvg("ab+", "#000"), /font-size="7"/);
+  const escaped = markIconSvg("a&b", `red" onclick="alert('<x>')`);
+  assert.match(escaped, /fill="red&quot; onclick=&quot;alert\(&apos;&lt;x&gt;&apos;\)"/);
+  assert.match(escaped, />a&amp;b<\/text>/);
+});

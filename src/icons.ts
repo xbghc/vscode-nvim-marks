@@ -33,13 +33,14 @@ function escapeXml(s: string): string {
  */
 export function markIconSvg(label: string, color: string): string {
   const text = escapeXml(label);
+  const fill = escapeXml(color);
   // Font size shrinks with label length so "ab+" still fits in 16px.
   const size = label.length <= 1 ? 11 : label.length === 2 ? 8.5 : 7;
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">` +
     `<text x="8" y="8" text-anchor="middle" dominant-baseline="central" ` +
     `font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" ` +
-    `font-weight="700" font-size="${size}" fill="${color}">${text}</text>` +
+    `font-weight="700" font-size="${size}" fill="${fill}">${text}</text>` +
     `</svg>`
   );
 }

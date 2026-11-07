@@ -3,6 +3,7 @@ import * as path from "node:path";
 import {
   buildStore,
   checkCompat,
+  compareMarks,
   decorationKey,
   groupByLine,
   makeNormalizer,
@@ -32,16 +33,25 @@ interface Settings {
 
 function readSettings(): Settings {
   const c = vscode.workspace.getConfiguration("nvimMarks");
+  const bool = (key: string, fallback: boolean): boolean => {
+    const val = c.get<unknown>(key);
+    return typeof val === "boolean" ? val : fallback;
+  };
+  const rawStyle = c.get<unknown>("style");
+  const style: Style = rawStyle === "gutter" || rawStyle === "eol" || rawStyle === "both" ? rawStyle : "gutter";
   const color = (key: string, fallback: IconColors): IconColors => {
     const v = c.get<Partial<IconColors>>(key);
-    return { light: v?.light ?? fallback.light, dark: v?.dark ?? fallback.dark };
+    return {
+      light: typeof v?.light === "string" && v.light.trim() !== "" ? v.light : fallback.light,
+      dark: typeof v?.dark === "string" && v.dark.trim() !== "" ? v.dark : fallback.dark,
+    };
   };
   return {
-    enabled: c.get<boolean>("enabled", true),
-    style: c.get<Style>("style", "gutter"),
-    overviewRuler: c.get<boolean>("overviewRuler", true),
-    showLocal: c.get<boolean>("showLocalMarks", true),
-    showGlobal: c.get<boolean>("showGlobalMarks", true),
+    enabled: bool("enabled", true),
+    style,
+    overviewRuler: bool("overviewRuler", true),
+    showLocal: bool("showLocalMarks", true),
+    showGlobal: bool("showGlobalMarks", true),
     localColor: color("localColor", { light: "#4d4d4d", dark: "#bdbdbd" }),
     globalColor: color("globalColor", { light: "#1a1a1a", dark: "#f2f2f2" }),
   };
@@ -65,17 +75,20 @@ class MarkRenderer implements vscode.Disposable {
     let total = 0;
     for (const l of this.store.byFile.values()) total += l.length;
     this.output.appendLine(`update: ${total} mark(s) in ${this.store.byFile.size} file(s)`);
+    this.applied.clear();
     this.applyAll();
   }
 
   reloadSettings(): void {
     this.settings = readSettings();
     this.disposeTypes();
+    this.applied.clear();
     this.applyAll();
   }
 
   toggle(): boolean {
     this.runtimeEnabled = !this.runtimeEnabled;
+    this.applied.clear();
     this.applyAll();
     return this.runtimeEnabled;
   }
@@ -137,6 +150,10 @@ class MarkRenderer implements vscode.Disposable {
     return this.applied.get(doc.uri.toString()) ?? new Map();
   }
 
+  clearDocument(doc: vscode.TextDocument): void {
+    this.applied.delete(doc.uri.toString());
+  }
+
   private fileKey(doc: vscode.TextDocument): string {
     return this.normalize(doc.uri.fsPath);
   }
@@ -186,6 +203,7 @@ class MarkRenderer implements vscode.Disposable {
 
   dispose(): void {
     this.disposeTypes();
+    this.applied.clear();
   }
 }
 
@@ -203,7 +221,7 @@ function markPickItems(renderer: MarkRenderer, preview = false): MarkPickItem[] 
   const items: MarkPickItem[] = [];
   const inActive = marks.filter((m) => m.file === activeKey);
   const elsewhere = marks.filter((m) => m.file !== activeKey).sort((a, b) =>
-    a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line || a.col - b.col || a.name.localeCompare(b.name),
+    a.file < b.file ? -1 : a.file > b.file ? 1 : compareMarks(a, b),
   );
 
   const lineText = (m: Mark): string => {
@@ -436,6 +454,7 @@ export function activate(context: vscode.ExtensionContext): NvimMarksApi {
     vscode.window.onDidChangeActiveTextEditor((e) => {
       if (e) renderer.apply(e);
     }),
+    vscode.workspace.onDidCloseTextDocument((doc) => renderer.clearDocument(doc)),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("nvimMarks")) renderer.reloadSettings();
     }),

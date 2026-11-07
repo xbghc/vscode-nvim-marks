@@ -34,6 +34,7 @@ export class NeovimBridge implements vscode.Disposable {
   private stopped = false;
   private pending: Promise<void> = Promise.resolve();
   private checking = false;
+  private configuring = 0;
   private stopTask?: Promise<void>;
   private lastError?: string;
   state = "waiting for vscode-neovim";
@@ -64,13 +65,14 @@ export class NeovimBridge implements vscode.Disposable {
   async start(): Promise<void> {
     try {
       this.source = await readFile(this.context.asAbsolutePath("lua/nvim-marks/init.lua"), "utf8");
+      if (this.stopped) return;
       const dependency = vscode.extensions.getExtension(NEOVIM);
       if (!dependency) throw new Error("Install and enable the vscode-neovim extension.");
-      await dependency.activate();
-      if (this.stopped) return;
       // vscode-neovim does not expose a public restart event. A small probe
       // detects a new Neovim session; the source is sent only when needed.
       this.timer = setInterval(() => { void this.check(); }, 5000);
+      await dependency.activate();
+      if (this.stopped) return;
       await this.configure();
     } catch (error) {
       this.failed(error);
@@ -90,9 +92,13 @@ export class NeovimBridge implements vscode.Disposable {
   }
 
   private async check(): Promise<void> {
-    if (this.stopped || this.checking) return;
+    if (this.stopped || this.checking || this.configuring > 0) return;
     this.checking = true;
     try {
+      const dependency = vscode.extensions.getExtension(NEOVIM);
+      if (!dependency) throw new Error("Install and enable the vscode-neovim extension.");
+      if (!dependency.isActive) await dependency.activate();
+      if (this.stopped || this.configuring > 0) return;
       await execute(`
         local marks = package.loaded["nvim-marks"]
         if not marks or marks._owner ~= ${literal(this.token)} then
@@ -109,6 +115,7 @@ export class NeovimBridge implements vscode.Disposable {
   }
 
   private configure(): Promise<void> {
+    this.configuring++;
     this.pending = this.pending.then(async () => {
       if (this.stopped || !this.source) return;
       const config = vscode.workspace.getConfiguration("nvimMarks");
@@ -135,7 +142,9 @@ export class NeovimBridge implements vscode.Disposable {
         end)
         require("vscode").action("nvimMarks.bridgeStatus", { args = { owner, not ok and tostring(err) or false } })
       `);
-    }).catch((error) => this.failed(error));
+    }).catch((error) => this.failed(error)).finally(() => {
+      this.configuring--;
+    });
     return this.pending;
   }
 

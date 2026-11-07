@@ -321,16 +321,51 @@ local recreated = create_document()
 vim.api.nvim_set_current_buf(recreated)
 vim.api.nvim_win_set_cursor(0, { 3, 1 })
 feed("ma")
+vim.api.nvim_win_set_cursor(0, { 4, 2 })
+feed("mA")
 close_document(recreated) -- before the debounced mark update
+local wiped_snapshot = marks.collect()
+local wiped_local = nil
+for _, e in ipairs(wiped_snapshot.locals) do
+  if e.file == vim.fn.fnamemodify(recreated_file, ":p") then wiped_local = e end
+end
+check(wiped_local and find(wiped_local.marks, "a") ~= nil,
+  "wiped document keeps its local marks in collect().locals while closed")
+local wiped_global = find(wiped_snapshot.globals, "A")
+check(wiped_global and wiped_global.file == vim.fn.fnamemodify(recreated_file, ":p") and wiped_global.line == 4 and wiped_global.col == 3,
+  "wiped document keeps its global marks in collect().globals while closed")
 marks.setup({ debounce_ms = 5 }) -- settings changes must not discard recovery data
 recreated = create_document()
 check(vim.deep_equal(vim.api.nvim_buf_get_mark(recreated, "a"), { 3, 1 }),
   "recreated document restores a local mark before BufEnter, even without a previous sync")
+check(vim.deep_equal(vim.api.nvim_buf_get_mark(recreated, "A"), { 4, 2 }),
+  "recreated document restores a global mark when reopened")
 vim.api.nvim_set_current_buf(recreated)
 vim.api.nvim_win_set_cursor(0, { 1, 0 })
 feed("`a")
 check(vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 3, 1 }),
   "a recovered mark supports native jumps at its original line and byte column")
+close_document(recreated)
+feed("`A")
+check(vim.fn.fnamemodify(vim.api.nvim_buf_get_name(0), ":p") == vim.fn.fnamemodify(recreated_file, ":p")
+  and vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 4, 2 }),
+  "jumping to a global mark in a wiped document reloads and jumps to its saved position")
+recreated = vim.api.nvim_get_current_buf()
+vim.bo[recreated].buftype = "acwrite"
+vim.cmd("delmarks A")
+
+-- Empty 1-line buffer created with BufAdd before lines are populated still restores marks > line 1
+vim.api.nvim_buf_set_mark(recreated, "a", 3, 1, {})
+close_document(recreated)
+local empty_first = vim.api.nvim_create_buf(false, true)
+vim.bo[empty_first].buftype = "acwrite"
+vim.api.nvim_buf_set_name(empty_first, recreated_file)
+vim.bo[empty_first].buflisted = true -- fires BufAdd while still 1 empty line
+vim.api.nvim_buf_set_lines(empty_first, 0, -1, false, recreated_lines)
+vim.bo[empty_first].modified = false
+check(vim.deep_equal(vim.api.nvim_buf_get_mark(empty_first, "a"), { 3, 1 }),
+  "buffer listed while still 1 empty line restores marks on lines > 1 once lines are populated")
+recreated = empty_first
 
 vim.api.nvim_set_current_buf(document_buf)
 vim.api.nvim_buf_delete(recreated, { unload = true })
@@ -371,8 +406,62 @@ marks.setup({ debounce_ms = 5 })
 recreated = create_document()
 check(vim.api.nvim_buf_get_mark(recreated, "a")[1] == 0,
   "teardown discards session recovery data")
-marks.teardown()
 close_document(recreated)
+
+-- 14b. Edge cases: m<Esc>, non-file/URI buffers, and invalid setup options.
+vim.api.nvim_set_current_buf(document_buf)
+vim.cmd("delmarks z")
+feed("m<Esc>")
+check(vim.api.nvim_buf_get_mark(document_buf, "z")[1] == 0,
+  "m<Esc> cancels setting a mark without setting a mark")
+
+local nofile_buf = vim.api.nvim_create_buf(true, true)
+vim.api.nvim_buf_set_name(nofile_buf, tmp .. "/scratch_nofile.txt")
+vim.api.nvim_buf_set_lines(nofile_buf, 0, -1, false, { "s1", "s2" })
+vim.bo[nofile_buf].buftype = "nofile"
+vim.api.nvim_buf_set_mark(nofile_buf, "a", 1, 0, {})
+vim.api.nvim_buf_set_mark(nofile_buf, "N", 1, 0, {})
+
+local help_buf = vim.api.nvim_create_buf(true, true)
+vim.api.nvim_buf_set_name(help_buf, tmp .. "/fake_help.txt")
+vim.api.nvim_buf_set_lines(help_buf, 0, -1, false, { "h1", "h2" })
+vim.bo[help_buf].buftype = "help"
+vim.api.nvim_buf_set_mark(help_buf, "a", 1, 0, {})
+vim.api.nvim_buf_set_mark(help_buf, "H", 1, 0, {})
+
+local untitled_buf = vim.api.nvim_create_buf(true, true)
+vim.api.nvim_buf_set_name(untitled_buf, "untitled:Untitled-1")
+vim.api.nvim_buf_set_lines(untitled_buf, 0, -1, false, { "u1", "u2" })
+vim.bo[untitled_buf].buftype = "acwrite"
+vim.api.nvim_buf_set_mark(untitled_buf, "a", 1, 0, {})
+vim.api.nvim_buf_set_mark(untitled_buf, "U", 1, 0, {})
+
+local edge_snapshot = marks.collect()
+local has_nonfile_local = false
+for _, e in ipairs(edge_snapshot.locals) do
+  if e.file:find("scratch_nofile", 1, true)
+    or e.file:find("fake_help", 1, true)
+    or e.file:find("Untitled%-1")
+  then
+    has_nonfile_local = true
+  end
+end
+check(not has_nonfile_local, "non-file and URI buffers are excluded from collect().locals")
+check(find(edge_snapshot.globals, "N") == nil
+  and find(edge_snapshot.globals, "H") == nil
+  and find(edge_snapshot.globals, "U") == nil,
+  "global marks in nofile, help, and URI buffers are excluded from collect().globals")
+
+vim.api.nvim_buf_delete(nofile_buf, { force = true })
+vim.api.nvim_buf_delete(help_buf, { force = true })
+vim.api.nvim_buf_delete(untitled_buf, { force = true })
+
+local ok_invalid = pcall(function()
+  marks.setup({ debounce_ms = -10, extra_events = { "NotAnAutocmdEvent", 123, "CursorMoved" } })
+end)
+check(ok_invalid and marks.config.debounce_ms == 60,
+  "invalid extra_events and negative debounce_ms are tolerated without error")
+marks.teardown()
 
 -- 15. Outside VS Code, setup is a no-op and does not require the vscode module.
 package.loaded["nvim-marks"] = nil
