@@ -29,10 +29,13 @@ interface Settings {
   showGlobal: boolean;
   localColor: IconColors;
   globalColor: IconColors;
+  fontFamily: string;
+  editorFontSize: number;
 }
 
 function readSettings(): Settings {
   const c = vscode.workspace.getConfiguration("nvimMarks");
+  const editorCfg = vscode.workspace.getConfiguration("editor");
   const bool = (key: string, fallback: boolean): boolean => {
     const val = c.get<unknown>(key);
     return typeof val === "boolean" ? val : fallback;
@@ -46,6 +49,13 @@ function readSettings(): Settings {
       dark: typeof v?.dark === "string" && v.dark.trim() !== "" ? v.dark : fallback.dark,
     };
   };
+  const rawFontFamily = editorCfg.get<unknown>("fontFamily");
+  const fontFamily = typeof rawFontFamily === "string" ? rawFontFamily.trim() : "";
+  const rawFontSize = editorCfg.get<unknown>("fontSize");
+  const editorFontSize =
+    typeof rawFontSize === "number" && Number.isFinite(rawFontSize) && rawFontSize > 0
+      ? rawFontSize
+      : 14;
   return {
     enabled: bool("enabled", true),
     style,
@@ -54,6 +64,8 @@ function readSettings(): Settings {
     showGlobal: bool("showGlobalMarks", true),
     localColor: color("localColor", { light: "#4d4d4d", dark: "#bdbdbd" }),
     globalColor: color("globalColor", { light: "#1a1a1a", dark: "#f2f2f2" }),
+    fontFamily,
+    editorFontSize,
   };
 }
 
@@ -170,14 +182,17 @@ class MarkRenderer implements vscode.Disposable {
     const perTheme = (color: string): vscode.ThemableDecorationRenderOptions => {
       const o: vscode.ThemableDecorationRenderOptions = {};
       if (s.style === "gutter" || s.style === "both") {
-        o.gutterIconPath = vscode.Uri.parse(markIconUri(label, color));
-        o.gutterIconSize = "contain";
+        o.gutterIconPath = vscode.Uri.parse(
+          markIconUri(label, color, { fontFamily: s.fontFamily, editorFontSize: s.editorFontSize }),
+        );
+        o.gutterIconSize = "auto";
       }
       if (s.style === "eol" || s.style === "both") {
         o.after = {
           contentText: ` ${kind === "global" ? "[" + label + "]" : label}`,
           color,
-          fontWeight: "bold",
+          fontStyle: "italic",
+          fontWeight: "400",
           margin: "0 0 0 1em",
         };
       }
@@ -456,7 +471,13 @@ export function activate(context: vscode.ExtensionContext): NvimMarksApi {
     }),
     vscode.workspace.onDidCloseTextDocument((doc) => renderer.clearDocument(doc)),
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration("nvimMarks")) renderer.reloadSettings();
+      if (
+        e.affectsConfiguration("nvimMarks") ||
+        e.affectsConfiguration("editor.fontFamily") ||
+        e.affectsConfiguration("editor.fontSize")
+      ) {
+        renderer.reloadSettings();
+      }
     }),
   );
 

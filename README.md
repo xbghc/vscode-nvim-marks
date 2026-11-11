@@ -51,7 +51,7 @@ User mappings changed afterward are preserved. Native marks remain in Neovim.
 ## Usage
 
 Set marks as usual. They appear in the gutter within a few milliseconds:
-both lowercase (local) and uppercase (global) marks appear as plain bold
+both lowercase (local) and uppercase (global) marks appear as plain italic
 letters without a border. When several marks sit on one line the icon shows the first
 two letters, or one letter and `+`.
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.11 (pre-release)
+
+- Render mark letters in the editor's configured font (`editor.fontFamily`) with italic `400` weight at `100%` of `editor.fontSize` (scaling multi-mark labels to fit the gutter), and avoid stretching gutter icons with line height.
+
 ## 0.1.10 (pre-release)
 
 - Preserve both local (`a-z`) and global (`A-Z`) marks when document buffers are unloaded or wiped, keeping them in snapshots while closed and restoring them when reopened or jumped to.

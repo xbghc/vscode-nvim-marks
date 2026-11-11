@@ -400,7 +400,15 @@ test("configuration changes filter and restyle applied decorations", async () =>
 
     await set("overviewRuler", false);
     assert.deepEqual([...a.appliedFor(doc).keys()].sort(), ["global:cQ", "local:a"]);
+
+    const editorCfg = vscode.workspace.getConfiguration("editor");
+    await editorCfg.update("fontFamily", "Menlo, monospace", vscode.ConfigurationTarget.Global);
+    await editorCfg.update("fontSize", 16, vscode.ConfigurationTarget.Global);
+    assert.deepEqual([...a.appliedFor(doc).keys()].sort(), ["global:cQ", "local:a"]);
   } finally {
+    const editorCfg = vscode.workspace.getConfiguration("editor");
+    await editorCfg.update("fontFamily", undefined, vscode.ConfigurationTarget.Global);
+    await editorCfg.update("fontSize", undefined, vscode.ConfigurationTarget.Global);
     for (const key of ["enabled", "showLocalMarks", "showGlobalMarks", "style", "overviewRuler"]) {
       await set(key, undefined);
     }

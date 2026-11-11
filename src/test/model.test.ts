@@ -295,11 +295,26 @@ test("compareVersions, payloadInfo, and checkCompat handle malformed versions an
   assert.match(badVer!.message, /is dev/);
 });
 
-test("markIconSvg scales font size by label length and escapes color attributes", () => {
-  assert.match(markIconSvg("a", "#000"), /font-size="11"/);
-  assert.match(markIconSvg("ab", "#000"), /font-size="8\.5"/);
-  assert.match(markIconSvg("a+", "#000"), /font-size="8\.5"/);
-  assert.match(markIconSvg("ab+", "#000"), /font-size="7"/);
+test("markIconSvg uses italic 400 weight, scales by editorFontSize, and sanitizes fontFamily", () => {
+  const single = markIconSvg("a", "#000");
+  assert.match(single, /font-style="italic"/);
+  assert.match(single, /font-weight="400"/);
+  assert.match(single, /font-size="14"/);
+  assert.match(markIconSvg("ab", "#000"), /font-size="10\.5"/);
+  assert.match(markIconSvg("a+", "#000"), /font-size="10\.5"/);
+  assert.match(markIconSvg("ab+", "#000"), /font-size="8\.4"/);
+
+  const custom = markIconSvg("m", "#111", {
+    fontFamily: `"JetBrains Mono", 'Fira Code';`,
+    editorFontSize: 20,
+  });
+  assert.match(custom, /width="26" height="26" viewBox="0 0 26 26"/);
+  assert.match(custom, /font-size="20"/);
+  assert.match(
+    custom,
+    /font-family="&apos;JetBrains Mono&apos;, &apos;Fira Code&apos;, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"/,
+  );
+
   const escaped = markIconSvg("a&b", `red" onclick="alert('<x>')`);
   assert.match(escaped, /fill="red&quot; onclick=&quot;alert\(&apos;&lt;x&gt;&apos;\)"/);
   assert.match(escaped, />a&amp;b<\/text>/);
