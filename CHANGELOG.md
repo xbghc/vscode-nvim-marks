@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.12 (pre-release)
+
+- Route cross-file uppercase (`A-Z`) backtick jumps through VS Code (`file://` documents) instead of loading unmanaged external buffers inside Neovim, fixing broken syntax/semantic highlighting and read-only editing after cross-file mark jumps while keeping same-file and special mark jumps native.
+- Preserve global marks from unloaded ShaDa buffers when `vscode-neovim` attaches `acwrite` document buffers.
+
 ## 0.1.11 (pre-release)
 
 - Render mark letters in the editor's configured font (`editor.fontFamily`) with italic `400` weight at `100%` of `editor.fontSize` (scaling multi-mark labels to fit the gutter), and avoid stretching gutter icons with line height.

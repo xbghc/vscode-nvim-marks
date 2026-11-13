@@ -7,6 +7,7 @@ import {
   decorationKey,
   groupByLine,
   makeNormalizer,
+  parseJumpTarget,
   payloadInfo,
   PROTOCOL_VERSION,
   type CompatIssue,
@@ -266,17 +267,7 @@ function markPickItems(renderer: MarkRenderer, preview = false): MarkPickItem[] 
   return items;
 }
 
-async function listMarks(renderer: MarkRenderer): Promise<void> {
-  const items = markPickItems(renderer);
-  const picked = await vscode.window.showQuickPick(items, {
-    title: "Neovim Marks",
-    placeHolder: items.length > 0
-      ? "Search marks, files or locations; Enter to jump"
-      : "No marks yet. Set one with m{a-zA-Z} in Neovim.",
-    matchOnDescription: true,
-  });
-  if (!picked?.mark) return;
-  const m = picked.mark;
+async function jumpToMark(m: Mark): Promise<void> {
   try {
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(m.file));
     const pos = markPosition(doc, m);
@@ -287,6 +278,19 @@ async function listMarks(renderer: MarkRenderer): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     void vscode.window.showErrorMessage(`Neovim Marks: could not open mark ${m.name} in ${vscode.workspace.asRelativePath(vscode.Uri.file(m.file))}. ${message}`);
   }
+}
+
+async function listMarks(renderer: MarkRenderer): Promise<void> {
+  const items = markPickItems(renderer);
+  const picked = await vscode.window.showQuickPick(items, {
+    title: "Neovim Marks",
+    placeHolder: items.length > 0
+      ? "Search marks, files or locations; Enter to jump"
+      : "No marks yet. Set one with m{a-zA-Z} in Neovim.",
+    matchOnDescription: true,
+  });
+  if (!picked?.mark) return;
+  await jumpToMark(picked.mark);
 }
 
 /** A mark reference that stays visible while Neovim receives the target key. */
@@ -461,6 +465,12 @@ export function activate(context: vscode.ExtensionContext): NvimMarksApi {
       return preview.show(renderer);
     }),
     vscode.commands.registerCommand("nvimMarks.hidePreview", () => preview.dispose()),
+    vscode.commands.registerCommand("nvimMarks.jump", (raw: unknown) => {
+      preview.dispose();
+      const target = parseJumpTarget(raw);
+      if (!target) return undefined;
+      return jumpToMark(target);
+    }),
     vscode.commands.registerCommand("nvimMarks.toggle", () => {
       const on = renderer.toggle();
       void vscode.window.setStatusBarMessage(`Neovim Marks: ${on ? "shown" : "hidden"}`, 2000);

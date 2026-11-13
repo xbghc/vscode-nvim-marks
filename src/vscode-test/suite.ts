@@ -87,6 +87,7 @@ test("extension activates and registers its commands", async () => {
     "nvimMarks.list",
     "nvimMarks.preview",
     "nvimMarks.hidePreview",
+    "nvimMarks.jump",
     "nvimMarks.toggle",
     "nvimMarks.status",
   ]) {
@@ -488,6 +489,40 @@ test("list command handles unopened files and $(icon) text in labels", async () 
     [vscode.window.activeTextEditor!.selection.active.line, vscode.window.activeTextEditor!.selection.active.character],
     [1, 11],
   );
+});
+
+test("jump command opens cross-file target as a file:// document, translates UTF-8 columns, and ignores malformed input", async () => {
+  const a = await api();
+  const fileJump = path.join(ws, "jump-target.txt");
+  fs.writeFileSync(fileJump, ["header", "甲😀乙 target", "footer"].join("\n"));
+
+  const docA = await vscode.workspace.openTextDocument(vscode.Uri.file(fileA));
+  await vscode.window.showTextDocument(docA);
+
+  await vscode.commands.executeCommand("nvimMarks.preview", {
+    version: 1,
+    plugin_version: a.status().extensionVersion,
+    locals: [],
+    globals: [{ name: "J", file: fileJump, line: 2, col: 12 }],
+  });
+
+  await vscode.commands.executeCommand("nvimMarks.jump", {
+    name: "J",
+    file: fileJump,
+    line: 2,
+    col: 12,
+  });
+  await waitFor(() => activeFileKey() === normalize(fileJump));
+  const editor = vscode.window.activeTextEditor!;
+  assert.equal(editor.document.uri.scheme, "file");
+  assert.equal(editor.document.isDirty, false);
+  assert.deepEqual([editor.selection.active.line, editor.selection.active.character], [1, 5]);
+  assert.ok(a.appliedFor(editor.document).has("global:J"));
+
+  // Malformed jump payloads are ignored without switching files or throwing.
+  await vscode.commands.executeCommand("nvimMarks.jump", { name: "bad", file: fileA, line: 1, col: 1 });
+  await vscode.commands.executeCommand("nvimMarks.jump", undefined);
+  assert.equal(activeFileKey(), normalize(fileJump));
 });
 
 export async function run(): Promise<void> {

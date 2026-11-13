@@ -186,11 +186,29 @@ check(actions[#actions].name == "nvimMarks.hidePreview", "Escape closes the prev
 feed("j")
 check(vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 2, 0 }), "normal input resumes after cancelling a jump")
 check(vim.deep_equal(vim.api.nvim_buf_get_lines(0, 0, -1, false), original_lines), "mark jumps and cancellation leave document text unchanged")
+local jump_count = action_count("nvimMarks.jump")
+vim.api.nvim_buf_set_mark(0, "S", 3, 1, {})
+feed("`S")
+check(vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 3, 1 }) and action_count("nvimMarks.jump") == jump_count,
+  "same-file uppercase marks jump natively without an extra jump RPC")
+feed("``")
+check(vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 2, 0 }), "double backtick returns after a same-file uppercase jump")
+vim.cmd("delmarks S")
+vim.api.nvim_win_set_cursor(0, { 2, 1 })
 feed("`B")
-check(vim.api.nvim_buf_get_name(0) == file_a and vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 5, 0 }),
-  "uppercase marks jump directly across files")
+local jump_action = actions[#actions]
+check(jump_action.name == "nvimMarks.jump"
+  and jump_action.args[1]
+  and jump_action.args[1].name == "B"
+  and jump_action.args[1].file == vim.fn.fnamemodify(file_a, ":p")
+  and jump_action.args[1].line == 5
+  and jump_action.args[1].col == 1,
+  "cross-file uppercase marks delegate opening and cursor placement to nvimMarks.jump")
+check(vim.api.nvim_buf_get_name(0) == vim.fn.fnamemodify(file_b, ":p"),
+  "cross-file uppercase marks do not switch buffers directly inside Neovim")
+check(vim.deep_equal(vim.fn.getpos("''"), { 0, 2, 2, 0 }),
+  "cross-file uppercase jumps still record the origin in the native context mark")
 check(action_count("nvimMarks.list") == list_count, "direct jumps and cancellation never open the search picker")
-vim.cmd("edit " .. file_b)
 n = #actions
 check(marks.list() and #actions == n + 1 and actions[#actions].name == "nvimMarks.list", "explicit list() still opens the searchable picker")
 
@@ -345,13 +363,25 @@ vim.api.nvim_win_set_cursor(0, { 1, 0 })
 feed("`a")
 check(vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 3, 1 }),
   "a recovered mark supports native jumps at its original line and byte column")
+feed("`A")
+check(vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 4, 2 }),
+  "a recovered global mark supports native jumps when its document is current")
 close_document(recreated)
 feed("`A")
-check(vim.fn.fnamemodify(vim.api.nvim_buf_get_name(0), ":p") == vim.fn.fnamemodify(recreated_file, ":p")
-  and vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 4, 2 }),
-  "jumping to a global mark in a wiped document reloads and jumps to its saved position")
-recreated = vim.api.nvim_get_current_buf()
-vim.bo[recreated].buftype = "acwrite"
+local wiped_jump = actions[#actions]
+check(wiped_jump.name == "nvimMarks.jump"
+  and wiped_jump.args[1]
+  and wiped_jump.args[1].name == "A"
+  and wiped_jump.args[1].file == vim.fn.fnamemodify(recreated_file, ":p")
+  and wiped_jump.args[1].line == 4
+  and wiped_jump.args[1].col == 3,
+  "jumping to a global mark in a wiped document delegates to nvimMarks.jump with its saved position")
+check(vim.fn.bufnr(recreated_file) == -1,
+  "jumping to a wiped document never creates an unmanaged external buffer in Neovim")
+recreated = create_document()
+check(vim.deep_equal(vim.api.nvim_buf_get_mark(recreated, "A"), { 4, 2 }),
+  "when VS Code opens the target document, its global mark is restored onto the managed buffer")
+vim.api.nvim_set_current_buf(recreated)
 vim.cmd("delmarks A")
 
 -- Empty 1-line buffer created with BufAdd before lines are populated still restores marks > line 1
@@ -452,9 +482,44 @@ check(find(edge_snapshot.globals, "N") == nil
   and find(edge_snapshot.globals, "U") == nil,
   "global marks in nofile, help, and URI buffers are excluded from collect().globals")
 
+local before_nonfile_jumps = action_count("nvimMarks.jump")
+feed("`H")
+check(vim.api.nvim_get_current_buf() == help_buf and action_count("nvimMarks.jump") == before_nonfile_jumps,
+  "global marks in non-file buffers still jump natively without calling nvimMarks.jump")
+vim.api.nvim_set_current_buf(document_buf)
+
 vim.api.nvim_buf_delete(nofile_buf, { force = true })
 vim.api.nvim_buf_delete(help_buf, { force = true })
 vim.api.nvim_buf_delete(untitled_buf, { force = true })
+
+local shada_txt = tmp .. "/shada_target.txt"
+local shada_file = tmp .. "/marks.shada"
+vim.fn.writefile({ "s_one", "s_two", "s_three", "s_four" }, shada_txt)
+vim.fn.system({
+  vim.v.progpath, "--headless", "-u", "NONE", "--cmd", "set shada='100", "-i", shada_file,
+  "-c", "edit " .. vim.fn.fnameescape(shada_txt),
+  "-c", "lua vim.api.nvim_buf_set_mark(0, 'Q', 3, 2, {})",
+  "-c", "qa!",
+})
+local prev_shada = vim.o.shada
+vim.o.shada = "'100"
+vim.cmd("rshada! " .. vim.fn.fnameescape(shada_file))
+vim.o.shada = prev_shada
+local shada_buf = vim.fn.getpos("'Q")[1]
+check(shada_buf > 0 and not vim.api.nvim_buf_is_loaded(shada_buf),
+  "reading ShaDa creates an unloaded buffer for global mark Q")
+local shada_snapshot = marks.collect()
+local shada_q = find(shada_snapshot.globals, "Q")
+check(shada_q and shada_q.line == 3 and shada_q.col == 3,
+  "collect() reports the unloaded ShaDa global mark before the file is opened")
+vim.bo[shada_buf].buftype = "acwrite"
+vim.api.nvim_buf_set_lines(shada_buf, 0, -1, false, { "s_one", "s_two", "s_three", "s_four" })
+vim.bo[shada_buf].modified = false
+vim.bo[shada_buf].buflisted = true
+check(vim.deep_equal(vim.api.nvim_buf_get_mark(shada_buf, "Q"), { 3, 2 }),
+  "attaching an unloaded ShaDa buffer as acwrite preserves its global mark line and column")
+vim.cmd("delmarks Q")
+vim.api.nvim_buf_delete(shada_buf, { force = true })
 
 local ok_invalid = pcall(function()
   marks.setup({ debounce_ms = -10, extra_events = { "NotAnAutocmdEvent", 123, "CursorMoved" } })

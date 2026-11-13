@@ -257,3 +257,18 @@ export function groupByLine(marks: Mark[], opts: LabelOptions): LineLabel[] {
 export function decorationKey(kind: MarkKind, label: string): string {
   return `${kind}:${label}`;
 }
+
+/** Parse one wire mark target (1-based line/col) into a 0-based Mark, or undefined if malformed. */
+export function parseJumpTarget(raw: unknown): Mark | undefined {
+  if (!isObject(raw) || typeof raw.name !== "string") return undefined;
+  const kind: MarkKind | undefined = GLOBAL_RE.test(raw.name)
+    ? "global"
+    : LOCAL_RE.test(raw.name)
+      ? "local"
+      : undefined;
+  if (!kind || typeof raw.file !== "string" || raw.file === "") return undefined;
+  const line = num(raw.line);
+  if (line === undefined || line < 1) return undefined;
+  const col = num(raw.col) ?? 1;
+  return { name: raw.name, kind, file: raw.file, line: line - 1, col: Math.max(0, col - 1) };
+}

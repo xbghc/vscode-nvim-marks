@@ -8,6 +8,7 @@ import {
   groupByLine,
   makeNormalizer,
   MIN_PLUGIN_VERSION,
+  parseJumpTarget,
   payloadInfo,
   PROTOCOL_VERSION,
 } from "../model";
@@ -318,4 +319,43 @@ test("markIconSvg uses italic 400 weight, scales by editorFontSize, and sanitize
   const escaped = markIconSvg("a&b", `red" onclick="alert('<x>')`);
   assert.match(escaped, /fill="red&quot; onclick=&quot;alert\(&apos;&lt;x&gt;&apos;\)"/);
   assert.match(escaped, />a&amp;b<\/text>/);
+});
+
+test("parseJumpTarget converts 1-based wire targets, preserves path casing, and rejects malformed inputs", () => {
+  assert.deepEqual(parseJumpTarget({ name: "A", file: "C:\\Repo\\Main.ts", line: 4, col: 3 }), {
+    name: "A",
+    kind: "global",
+    file: "C:\\Repo\\Main.ts",
+    line: 3,
+    col: 2,
+  });
+  assert.deepEqual(parseJumpTarget({ name: "z", file: "/repo/main.ts", line: 1, col: 0 }), {
+    name: "z",
+    kind: "local",
+    file: "/repo/main.ts",
+    line: 0,
+    col: 0,
+  });
+  assert.deepEqual(parseJumpTarget({ name: "B", file: "/repo/main.ts", line: 2 }), {
+    name: "B",
+    kind: "global",
+    file: "/repo/main.ts",
+    line: 1,
+    col: 0,
+  });
+
+  for (const invalid of [
+    null,
+    undefined,
+    "A",
+    {},
+    { name: "'", file: "/repo/main.ts", line: 1, col: 1 },
+    { name: "1", file: "/repo/main.ts", line: 1, col: 1 },
+    { name: "AB", file: "/repo/main.ts", line: 1, col: 1 },
+    { name: "A", file: "", line: 1, col: 1 },
+    { name: "A", file: "/repo/main.ts", line: 0, col: 1 },
+    { name: "A", file: "/repo/main.ts", line: 1.5, col: 1 },
+  ]) {
+    assert.equal(parseJumpTarget(invalid), undefined);
+  }
 });

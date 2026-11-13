@@ -11,7 +11,7 @@ local M = {}
 --- Release of this plugin, sent with every payload so the VS Code extension
 --- can tell when the two halves drift apart. test/lua/spec.lua keeps it equal
 --- to the version in package.json.
-M.version = "0.1.11"
+M.version = "0.1.12"
 
 local defaults = {
   --- Wrap `m` in normal mode so a newly set mark shows up immediately
@@ -152,6 +152,9 @@ local function restore_marks(buf)
   if buftype ~= "" and buftype ~= "acwrite" and buftype ~= "nofile" then
     return
   end
+  if buftype == "acwrite" and not vim.bo[buf].buflisted then
+    return
+  end
   local file = abs(vim.api.nvim_buf_get_name(buf))
   local key = file_key(file)
   local saved = key and retired_marks[key]
@@ -265,16 +268,29 @@ function M.collect()
             file = bufname
           end
           if not vim.api.nvim_buf_is_loaded(m.pos[1]) then
-            local k = file_key(abs(file))
+            local resolved = abs(file)
+            local k = file_key(resolved)
             local saved = k and retired_marks[k]
             if saved and saved.globals then
+              local found = false
               for _, g in ipairs(saved.globals) do
                 if g.name == name then
                   line = g.line
                   col = g.col
+                  found = true
                   break
                 end
               end
+              if not found then
+                saved.globals[#saved.globals + 1] = { name = name, line = line, col = col }
+              end
+            elseif resolved and k then
+              retired_marks[k] = {
+                file = resolved,
+                buf = m.pos[1],
+                locals = local_marks(m.pos[1]),
+                globals = { { name = name, line = line, col = col } },
+              }
             end
           end
         end
@@ -374,27 +390,38 @@ end
 
 local function jump_mark_interactive()
   local vs = vscode()
+  local payload
   if vs then
-    local payload = M.collect()
+    payload = M.collect()
     last_sent = vim.json.encode(payload)
     vs.action("nvimMarks.preview", { args = { payload } })
   end
   local ok, ch = pcall(vim.fn.getcharstr)
   if vs then vs.action("nvimMarks.hidePreview") end
   if not ok or ch == "" or ch == "\27" then return "" end
-  if ch:match("^[A-Z]$") then
-    local pos = vim.fn.getpos("'" .. ch)
-    if pos[2] > 0 and (pos[1] == 0 or not vim.api.nvim_buf_is_valid(pos[1]) or not vim.api.nvim_buf_is_loaded(pos[1])) then
-      for _, saved in pairs(retired_marks) do
-        for _, g in ipairs(saved.globals or {}) do
-          if g.name == ch and vim.fn.filereadable(saved.file) == 1 then
-            local b = vim.fn.bufadd(saved.file)
-            vim.bo[b].swapfile = false
-            pcall(vim.fn.bufload, b)
-            restore_marks(b)
-            break
+  if vs and ch:match("^[A-Z]$") and payload then
+    local target = nil
+    for _, g in ipairs(payload.globals) do
+      if g.name == ch then
+        target = g
+        break
+      end
+    end
+    if target then
+      local cur_buf = vim.api.nvim_get_current_buf()
+      local cur_key = file_key(document_file(cur_buf))
+      if cur_key and file_key(target.file) == cur_key then
+        if vim.fn.getpos("'" .. ch)[1] ~= cur_buf then
+          local line_count = vim.api.nvim_buf_line_count(cur_buf)
+          if line_count > 0 then
+            pcall(vim.api.nvim_buf_set_mark, cur_buf, ch, math.min(target.line, line_count), target.col - 1, {})
           end
         end
+      else
+        -- Open cross-file global marks through VS Code so vscode-neovim attaches a
+        -- real file:// document instead of an unmanaged external buffer.
+        vs.action("nvimMarks.jump", { args = { target } })
+        return "m'"
       end
     end
   end
